@@ -21,18 +21,21 @@
 
 #include "ble_driver_srv.h"
 
-uint16_t data_to_sent = 0xAABB;
+
 float battery_voltage = 3.7f;
 uint8_t battery_level = 97;
 uint8_t batteryVoltageBuf[] = {0x00, 0x00, 0x00, 0x00};
 bool serviceConnected = false;
+uint8_t motorSpeed = 0x00u;
+uint8_t motorDirection = 0x00u;
 
-typedef struct ble_characteristic_t {
+typedef struct  {
     uint16_t handle;
     esp_bt_uuid_t uuid;
     esp_gatt_perm_t perm;
     esp_gatt_char_prop_t property;
     esp_attr_value_t attr_val;
+    uint16_t descr_handle;
     esp_attr_value_t cccd_val;
 } ble_characteristic_t;
 
@@ -41,6 +44,9 @@ uint8_t cccd_value_battery_level[2] = {0x00, 0x00}; // Default value: notificati
 
 // CCCD for Battery Voltage
 uint8_t cccd_value_battery_voltage[2] = {0x00, 0x00}; // Default value: notifications/indications disabled
+
+// CCCD for motor speed
+uint8_t cccd_value_motor_speed[2] = {0x00, 0x00}; // Default value: notifications/indications disabled
 
 #define GATTS_TAG "GATTS_DEMO"
 
@@ -52,20 +58,20 @@ static void convert_to_battery_voltage(uint8_t *buf, float voltage);
 
 #define GATTS_SERVICE_UUID_TEST_A   0x00FF
 #define GATTS_CHAR_UUID_TEST_A      0xFF01
-#define GATTS_DESCR_UUID_TEST_A     0x3333
 #define GATTS_NUM_HANDLE_TEST_A     4
 
 #define GATTS_SERVICE_UUID_TEST_B   0x00EE
 #define GATTS_CHAR_UUID_TEST_B      0xEE01
-#define GATTS_DESCR_UUID_TEST_B     0x2222
 #define GATTS_NUM_HANDLE_TEST_B     4
 
-// #define GATTS_SERVICE_UUID_BATTERY   0x180F
-// #define GATTS_CHAR_UUID_BATTERY_LEVEL  0x2A19
-// #define GATTS_CHAR_UUID_BATTERY_VOLTAGE 0x2B18
-#define GATTS_SERVICE_UUID_BATTERY   0x00AA
-#define GATTS_CHAR_UUID_BATTERY_LEVEL  0xAA01
-#define GATTS_CHAR_UUID_BATTERY_VOLTAGE 0xAA02
+#define GATTS_SERVICE_UUID_BATTERY   0x180F
+#define GATTS_CHAR_UUID_BATTERY_LEVEL  0x2A19
+#define GATTS_CHAR_UUID_BATTERY_VOLTAGE 0x2B18
+// #define GATTS_SERVICE_UUID_BATTERY   0x00AA
+// #define GATTS_CHAR_UUID_BATTERY_LEVEL  0xAA01
+#define GATTS_CHAR_NUM_BATTERY_LEVEL 0
+// #define GATTS_CHAR_UUID_BATTERY_VOLTAGE 0xAA02
+#define GATTS_CHAR_NUM_BATTERY_VOLTAGE 1
 #define GATTS_NUM_HANDLE_BATTERY     8
 
 static char test_device_name[ESP_BLE_ADV_NAME_LEN_MAX] = "ESP_GATTS_DEMO";
@@ -204,7 +210,7 @@ static struct gatts_profile_inst gl_profile_tab[PROFILE_NUM] = {
         .gatts_if = ESP_GATT_IF_NONE,
         .app_id = PROFILE_BATTERY_APP_ID,
         .chars={
-            [0] = {
+            [GATTS_CHAR_NUM_BATTERY_LEVEL] = {
                 .uuid = {
                     .len = ESP_UUID_LEN_16,
                     .uuid = {.uuid16 = GATTS_CHAR_UUID_BATTERY_LEVEL},
@@ -222,7 +228,7 @@ static struct gatts_profile_inst gl_profile_tab[PROFILE_NUM] = {
                     .attr_value = cccd_value_battery_level,
                 },
             },
-            [1] = {
+            [GATTS_CHAR_NUM_BATTERY_VOLTAGE] = {
                 .uuid = {
                     .len = ESP_UUID_LEN_16,
                     .uuid = {.uuid16 = GATTS_CHAR_UUID_BATTERY_VOLTAGE},
@@ -310,6 +316,7 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
             break;
         }
         ESP_LOGI(GATTS_TAG, "Advertising stop successfully");
+        
         break;
     case ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT:
          ESP_LOGI(GATTS_TAG, "Connection params update, status %d, conn_int %d, latency %d, timeout %d",
@@ -324,6 +331,10 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
                   param->pkt_data_length_cmpl.params.rx_len,
                   param->pkt_data_length_cmpl.params.tx_len);
         break;
+
+    case ESP_GAP_BLE_READ_RSSI_COMPLETE_EVT:
+        ESP_LOGI(GATTS_TAG, "RSSI: %d dBm", param->read_rssi_cmpl.rssi);
+        break;        
     default:
         break;
     }
@@ -560,9 +571,9 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         memcpy(conn_params.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
         /* For the IOS system, please reference the apple official documents about the ble connection parameters restrictions. */
         conn_params.latency = 0;
-        conn_params.max_int = 0x20;    // max_int = 0x20*1.25ms = 40ms
-        conn_params.min_int = 0x10;    // min_int = 0x10*1.25ms = 20ms
-        conn_params.timeout = 400;    // timeout = 400*10ms = 4000ms
+        conn_params.max_int = 0x30;    // max_int = 0x20*1.25ms = 40ms
+        conn_params.min_int = 0x20;    // min_int = 0x10*1.25ms = 20ms
+        conn_params.timeout = 600;    // timeout = 400*10ms = 4000ms
         ESP_LOGI(GATTS_TAG, "Connected A, conn_id %u, remote "ESP_BD_ADDR_STR"",
                  param->connect.conn_id, ESP_BD_ADDR_HEX(param->connect.remote_bda));
         gl_profile_tab[PROFILE_A_APP_ID].conn_id = param->connect.conn_id;
@@ -733,7 +744,43 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
     }
 }
 
+static ble_characteristic_t *get_characteristic_by_handle(uint16_t handle) {
+    for (int i = 0; i < GATTS_CHAR_NUM_BATTERY_VOLTAGE+1; i++) {
+        if (gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[i].handle == handle) {
+            return &gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[i];
+        }
+    }
+    return NULL;
+}
+
+static ble_characteristic_t* get_characteristic_by_uuid(uint16_t uuid) {
+    for (int i = 0; i < GATTS_CHAR_NUM_BATTERY_VOLTAGE+1; i++) {
+        if (gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[i].uuid.uuid.uuid16 == uuid) {
+            return &gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[i];
+        }
+    }
+    return NULL;
+}
+
+static ble_characteristic_t* get_characteristic_by_descriptor_handle(uint16_t handle) {
+    for (int i = 0; i < GATTS_CHAR_NUM_BATTERY_VOLTAGE+1; i++) {
+        if (gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[i].descr_handle == handle) {
+            return &gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[i];
+        }
+    }
+    return NULL;
+}
+
+static uint16_t convertArrToUint16(uint8_t *arr) {
+    uint16_t value = 0;
+    value |= (arr[1] << 8); // MSB
+    value |= arr[0];       // LSB
+    return value;
+}
+
 static void gatts_profile_battery_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
+    ble_characteristic_t* charPtr = NULL;
+    esp_gatt_status_t status = ESP_GATT_OK;
     switch (event) {
     case ESP_GATTS_REG_EVT:
         ESP_LOGI(GATTS_TAG, "Battery Service registered, app_id %d", param->reg.app_id);
@@ -750,25 +797,6 @@ static void gatts_profile_battery_event_handler(esp_gatts_cb_event_t event, esp_
         gl_profile_tab[PROFILE_BATTERY_APP_ID].service_handle = param->create.service_handle;
 
         esp_ble_gatts_start_service(gl_profile_tab[PROFILE_BATTERY_APP_ID].service_handle);
-
-        // Add Battery Level Characteristic
-        // esp_err_t add_char_ret = esp_ble_gatts_add_char(gl_profile_tab[PROFILE_BATTERY_APP_ID].service_handle, &battery_level_uuid,
-        //     ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-        //     ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_NOTIFY,
-        //     &battery_level_attr_val, NULL);
-        // if (add_char_ret) {
-        //     ESP_LOGE(GATTS_TAG, "Failed to add Battery Level characteristic, error code = %x", add_char_ret);
-        // }
-
-        // // Add Battery Voltage Characteristic
-        // add_char_ret = esp_ble_gatts_add_char(gl_profile_tab[PROFILE_BATTERY_APP_ID].service_handle, &battery_voltage_uuid,
-        //         ESP_GATT_PERM_READ,
-        //         ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_NOTIFY,
-        //         &battery_voltage_attr_val, NULL);
-        // if (add_char_ret) {
-        //     ESP_LOGE(GATTS_TAG, "Failed to add Battery Voltage characteristic, error code = %x", add_char_ret);
-        // }
-
         
         esp_err_t add_char_ret = esp_ble_gatts_add_char(gl_profile_tab[PROFILE_BATTERY_APP_ID].service_handle, 
             &(gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[gl_profile_tab[PROFILE_BATTERY_APP_ID].chars_init_counter].uuid),
@@ -785,23 +813,16 @@ static void gatts_profile_battery_event_handler(esp_gatts_cb_event_t event, esp_
             ESP_LOGI(GATTS_TAG, "Characteristic add BAT, status %d, attr_handle %d, service_handle %d",
                      param->add_char.status, param->add_char.attr_handle, param->add_char.service_handle);
             if (param->add_char.char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_BATTERY_LEVEL) {
-                gl_profile_tab[PROFILE_BATTERY_APP_ID].char_handle = param->add_char.attr_handle;
-                ESP_LOGI(GATTS_TAG, "Battery Level characteristic handle: %d", gl_profile_tab[PROFILE_BATTERY_APP_ID].char_handle);
+                gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[GATTS_CHAR_NUM_BATTERY_LEVEL].handle = param->add_char.attr_handle;
+                // gl_profile_tab[PROFILE_BATTERY_APP_ID].char_handle = param->add_char.attr_handle;
+                ESP_LOGI(GATTS_TAG, "Battery Level characteristic handle: %d", gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[GATTS_CHAR_NUM_BATTERY_LEVEL].handle);
 
-            //     gl_profile_tab[PROFILE_BATTERY_APP_ID].descr_uuid.len = ESP_UUID_LEN_16;
-            //     gl_profile_tab[PROFILE_BATTERY_APP_ID].descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG;
-            //     esp_ble_gatts_add_char_descr(gl_profile_tab[PROFILE_BATTERY_APP_ID].service_handle, &gl_profile_tab[PROFILE_BATTERY_APP_ID].descr_uuid,
-            //                                  ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-            //                                  &cccd_attr_val_battery_level, NULL);
+
             } else if (param->add_char.char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_BATTERY_VOLTAGE) {
-                gl_profile_tab[PROFILE_BATTERY_APP_ID].char_handle_voltage = param->add_char.attr_handle;
-                ESP_LOGI(GATTS_TAG, "Battery Voltage characteristic handle: %d", gl_profile_tab[PROFILE_BATTERY_APP_ID].char_handle_voltage);
+                // gl_profile_tab[PROFILE_BATTERY_APP_ID].char_handle_voltage = param->add_char.attr_handle;
+                gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[GATTS_CHAR_NUM_BATTERY_VOLTAGE].handle = param->add_char.attr_handle;
+                ESP_LOGI(GATTS_TAG, "Battery Voltage characteristic handle: %d", gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[GATTS_CHAR_NUM_BATTERY_VOLTAGE].handle);
 
-            //     gl_profile_tab[PROFILE_BATTERY_APP_ID].descr_uuid.len = ESP_UUID_LEN_16;
-            //     gl_profile_tab[PROFILE_BATTERY_APP_ID].descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG;
-            //     esp_ble_gatts_add_char_descr(gl_profile_tab[PROFILE_BATTERY_APP_ID].service_handle, &gl_profile_tab[PROFILE_BATTERY_APP_ID].descr_uuid,
-            //                                  ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-            //                                  &cccd_attr_val_battery_voltage, NULL);
             }
             else {
                 ESP_LOGE(GATTS_TAG, "Unknown characteristic UUID");
@@ -825,7 +846,7 @@ static void gatts_profile_battery_event_handler(esp_gatts_cb_event_t event, esp_
 
             break;
     case ESP_GATTS_ADD_CHAR_DESCR_EVT:
-        gl_profile_tab[PROFILE_BATTERY_APP_ID].descr_handle = param->add_char_descr.attr_handle;
+        gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[gl_profile_tab[PROFILE_BATTERY_APP_ID].chars_init_counter].descr_handle = param->add_char_descr.attr_handle;
         ESP_LOGI(GATTS_TAG, "Descriptor add BAT, status %d, attr_handle %d, service_handle %d",
                     param->add_char_descr.status, param->add_char_descr.attr_handle, param->add_char_descr.service_handle);
                     
@@ -855,51 +876,81 @@ static void gatts_profile_battery_event_handler(esp_gatts_cb_event_t event, esp_
         esp_gatt_rsp_t rsp;
         memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
         rsp.attr_value.handle = param->read.handle;
+
+        charPtr = get_characteristic_by_handle(param->read.handle);
+        if(charPtr != NULL)
+        {
+            rsp.attr_value.len = charPtr->attr_val.attr_len;
+            memcpy(rsp.attr_value.value, charPtr->attr_val.attr_value, charPtr->attr_val.attr_len);
+        }
+        else
+        {
+            charPtr = get_characteristic_by_descriptor_handle(param->read.handle);
+            if(charPtr != NULL)
+            {
+                rsp.attr_value.len = 2; // Length of CCCD value
+                memcpy(rsp.attr_value.value, charPtr->cccd_val.attr_value, 2);
+            }
+            else
+            {
+                ESP_LOGE(GATTS_TAG, "Unknown handle");
+                esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_ERROR, NULL);
+                return;
+            }
+        }
     
-        if (param->read.handle == gl_profile_tab[PROFILE_BATTERY_APP_ID].char_handle) {
-            // Battery Level
-            ESP_LOGI(GATTS_TAG, "Battery level");
-            rsp.attr_value.len = 1;
-            rsp.attr_value.value[0] = battery_level; // Example: Battery Level = 50%
-        } else if (param->read.handle == gl_profile_tab[PROFILE_BATTERY_APP_ID].char_handle_voltage) {
-            // Battery Voltage
-            ESP_LOGI(GATTS_TAG, "Battery volatage");
-            rsp.attr_value.len = 4;
-            //store floating point value in 4 bytes
-            // Convert to 4-byte representation
-            convert_to_battery_voltage(rsp.attr_value.value,battery_voltage);
-        }
-        else {
-            ESP_LOGE(GATTS_TAG, "Unknown handle");
-            return;
-        }
+        // if (param->read.handle == gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[GATTS_CHAR_NUM_BATTERY_LEVEL].handle) {
+        //     // Battery Level
+        //     ESP_LOGI(GATTS_TAG, "Battery level");
+        //     rsp.attr_value.len = 1;
+        //     rsp.attr_value.value[0] = battery_level; // Example: Battery Level = 50%
+        // } else if (param->read.handle == gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[GATTS_CHAR_NUM_BATTERY_VOLTAGE].handle) {
+        //     // Battery Voltage
+        //     ESP_LOGI(GATTS_TAG, "Battery volatage");
+        //     rsp.attr_value.len = 4;
+        //     //store floating point value in 4 bytes
+        //     // Convert to 4-byte representation
+        //     convert_to_battery_voltage(rsp.attr_value.value,battery_voltage);
+        // }
+        // else {
+        //     ESP_LOGE(GATTS_TAG, "Unknown handle");
+        //     return;
+        // }
     
         esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_OK, &rsp);
         break;
     case ESP_GATTS_WRITE_EVT: 
         ESP_LOGI(GATTS_TAG, "Write event BAT, handle %d", param->write.handle);
+        charPtr = get_characteristic_by_descriptor_handle(param->write.handle);
 
-        if (param->write.handle == gl_profile_tab[PROFILE_BATTERY_APP_ID].descr_handle) {
-            // CCCD for Battery Level
+        if (charPtr != NULL) {
             uint16_t descr_value = param->write.value[1] << 8 | param->write.value[0];
+            memcpy(charPtr->cccd_val.attr_value, param->write.value,2);
+            ESP_LOGI(GATTS_TAG, "Descriptor value: %d", descr_value);
             if (descr_value == 0x0001) {
-                ESP_LOGI(GATTS_TAG, "Notifications enabled for Battery Level");
+                //print as hex in format 0x0001
+
+                ESP_LOGI(GATTS_TAG, "Notifications enabled for char 0x%04x", charPtr->uuid.uuid.uuid16);
             } else if (descr_value == 0x0002) {
-                ESP_LOGI(GATTS_TAG, "Indications enabled for Battery Level");
+                ESP_LOGI(GATTS_TAG, "Indications enabled for  char 0x%04x", charPtr->uuid.uuid.uuid16);
             } else if (descr_value == 0x0000) {
-                ESP_LOGI(GATTS_TAG, "Notifications/Indications disabled for Battery Level");
+                ESP_LOGI(GATTS_TAG, "Notifications/Indications disabled for char 0x%04x", charPtr->uuid.uuid.uuid16);
             }
-        // } else if (param->write.handle == gl_profile_tab[PROFILE_BATTERY_APP_ID].descr_handle_voltage) {
-        //     // CCCD for Battery Voltage
-        //     uint16_t descr_value = param->write.value[1] << 8 | param->write.value[0];
-        //     if (descr_value == 0x0001) {
-        //         ESP_LOGI(GATTS_TAG, "Notifications enabled for Battery Voltage");
-        //     } else if (descr_value == 0x0002) {
-        //         ESP_LOGI(GATTS_TAG, "Indications enabled for Battery Voltage");
-        //     } else if (descr_value == 0x0000) {
-        //         ESP_LOGI(GATTS_TAG, "Notifications/Indications disabled for Battery Voltage");
-        //     }
         }
+        else
+        {
+            ESP_LOGE(GATTS_TAG, "Unknown descriptor handle");
+            status = ESP_GATT_ERROR;
+        }
+        
+        // example_write_event_env(gatts_if, &b_prepare_write_env, param);
+        esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, status, NULL);
+        break;
+    
+    case ESP_GATTS_EXEC_WRITE_EVT:
+        ESP_LOGI(GATTS_TAG,"Execute write BAT");
+        esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL);
+        // example_exec_write_event_env(&b_prepare_write_env, param);
         break;
         
     case ESP_GATTS_CONNECT_EVT:
@@ -1024,67 +1075,58 @@ void ble_driver_srv_task(void)
     //loop
     while (1) {
         vTaskDelay(10000 / portTICK_PERIOD_MS);
-        //send notify for profile a
-        // if (gl_profile_tab[PROFILE_A_APP_ID].gatts_if != ESP_GATT_IF_NONE) {
-        //     ESP_LOGI(GATTS_TAG, "Send notify for profile A");
-        //     data_to_sent++;
-        //     uint8_t notify_data[2];
-        //     notify_data[0] = data_to_sent & 0x00FF;
-        //     notify_data[1] = (data_to_sent >> 8) & 0x00FF;
-        //     //the size of notify_data[] need less than MTU size
-        //     esp_ble_gatts_send_indicate(gl_profile_tab[PROFILE_A_APP_ID].gatts_if, gl_profile_tab[PROFILE_A_APP_ID].conn_id,
-        //                                 gl_profile_tab[PROFILE_A_APP_ID].char_handle,
-        //                                 sizeof(notify_data), notify_data, false);
-        // }
+
     }
     return;
 }
 
 void update_battery_level(uint8_t bat_level) {
+    battery_level = bat_level;
+    if(serviceConnected == true) {
+        
 
-
-    // Decrease battery level for demonstration
-    battery_level = (bat_level > 0) ? bat_level : 100;
-
-    if(serviceConnected == false) {
-        ESP_LOGI(GATTS_TAG, "Battery Service not connected, skipping update.");
-        return;
-    }
-    // Send notification if enabled
-    if (gl_profile_tab[PROFILE_BATTERY_APP_ID].gatts_if != ESP_GATT_IF_NONE) {
         // Update the characteristic value
-        esp_ble_gatts_set_attr_value(gl_profile_tab[PROFILE_BATTERY_APP_ID].char_handle, sizeof(battery_level), &battery_level);
+        esp_ble_gatts_set_attr_value(gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[GATTS_CHAR_NUM_BATTERY_LEVEL].handle, sizeof(battery_level), &battery_level);
 
-        esp_ble_gatts_send_indicate(gl_profile_tab[PROFILE_BATTERY_APP_ID].gatts_if,
-                                    gl_profile_tab[PROFILE_BATTERY_APP_ID].conn_id,
-                                    gl_profile_tab[PROFILE_BATTERY_APP_ID].char_handle,
-                                    sizeof(battery_level), &battery_level, false);
+        // Send notification if enabled
+        if (convertArrToUint16(gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[GATTS_CHAR_NUM_BATTERY_LEVEL].cccd_val.attr_value) == 0x0001) {
+            
+            ESP_LOGI(GATTS_TAG, "Sending notification for Battery Level: %d%%", battery_level);
+            // Send notification to the connected device
+            esp_ble_gatts_send_indicate(gl_profile_tab[PROFILE_BATTERY_APP_ID].gatts_if,
+                                        gl_profile_tab[PROFILE_BATTERY_APP_ID].conn_id,
+                                        gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[GATTS_CHAR_NUM_BATTERY_LEVEL].handle,
+                                        sizeof(battery_level), &battery_level, false);
+        }
+    }
+    else {
+        ESP_LOGI(GATTS_TAG, "Battery Service not connected, skipping update.");
     }
 
-    ESP_LOGI(GATTS_TAG, "Battery Level updated: %d%%", battery_level);
-    
 }
 
 void update_battery_voltage(float bat_voltage) {
 
     battery_voltage = bat_voltage;
 
-    if(serviceConnected == false) {
-        ESP_LOGI(GATTS_TAG, "Battery Service not connected, skipping update.");
-        return;
-    }
-    // Send notification if enabled
-    if (gl_profile_tab[PROFILE_BATTERY_APP_ID].gatts_if != ESP_GATT_IF_NONE) {
+    if(serviceConnected == true) {
         uint8_t buf[4];
         convert_to_battery_voltage(buf,battery_voltage);
         // Update the characteristic value
-        esp_ble_gatts_set_attr_value(gl_profile_tab[PROFILE_BATTERY_APP_ID].char_handle_voltage, sizeof(buf), buf);
+        esp_ble_gatts_set_attr_value(gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[GATTS_CHAR_NUM_BATTERY_VOLTAGE].handle, sizeof(buf), buf);
 
-        esp_ble_gatts_send_indicate(gl_profile_tab[PROFILE_BATTERY_APP_ID].gatts_if,
-                                    gl_profile_tab[PROFILE_BATTERY_APP_ID].conn_id,
-                                    gl_profile_tab[PROFILE_BATTERY_APP_ID].char_handle_voltage,
-                                    sizeof(buf), buf, false);
+        // Send notification if enabled
+        if (convertArrToUint16(gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[GATTS_CHAR_NUM_BATTERY_VOLTAGE].cccd_val.attr_value) == 0x0001) {
+            
+            ESP_LOGI(GATTS_TAG, "Sending notification for Battery Voltage: %.3f", battery_voltage);
+            // Send notification to the connected device
+            esp_ble_gatts_send_indicate(gl_profile_tab[PROFILE_BATTERY_APP_ID].gatts_if,
+                                        gl_profile_tab[PROFILE_BATTERY_APP_ID].conn_id,
+                                        gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[GATTS_CHAR_NUM_BATTERY_VOLTAGE].handle,
+                                        sizeof(buf), buf, false);
+        }
     }
-
-    ESP_LOGI(GATTS_TAG, "Battery Voltage updated: %.03f V", battery_voltage);
+    else {
+        ESP_LOGI(GATTS_TAG, "Battery Service not connected, skipping update.");
+    }
 }

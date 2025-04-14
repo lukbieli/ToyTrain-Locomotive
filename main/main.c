@@ -17,6 +17,7 @@ void locomotive_task(void *arg)
         vTaskDelay(5000 / portTICK_PERIOD_MS);
         // Example: Send data to the BLE characteristic
         update_battery_level((--battery_level >= 0) ? battery_level : 0 ); // Update battery level to 50%
+        vTaskDelay(5000 / portTICK_PERIOD_MS);
         update_battery_voltage((4.2f * (float)battery_level) / 100.0f); // Update battery voltage to 4.1V
     }
 }
