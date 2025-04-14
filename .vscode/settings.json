@@ -10,5 +10,5 @@
     "files.associations": {
         "ble_driver_srv.h": "c"
     },
-    "idf.flashType": "UART"
+    "idf.flashType": "JTAG"
 }
