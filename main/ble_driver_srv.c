@@ -21,87 +21,85 @@
 
 #include "ble_driver_srv.h"
 
-//Macros
+// Battery Service UUIDs and Handles
+#define GATTS_SERVICE_UUID_BATTERY       0x180F
+#define GATTS_CHAR_UUID_BATTERY_LEVEL    0x2A19
+#define GATTS_CHAR_UUID_BATTERY_VOLTAGE  0x2B18
+#define GATTS_CHAR_NUM_BATTERY_LEVEL     0
+#define GATTS_CHAR_NUM_BATTERY_VOLTAGE   1
+#define GATTS_NUM_HANDLE_BATTERY         8
 
-//Service Battery
-#define GATTS_SERVICE_UUID_BATTERY   0x180F
-#define GATTS_CHAR_UUID_BATTERY_LEVEL  0x2A19
-#define GATTS_CHAR_UUID_BATTERY_VOLTAGE 0x2B18
-#define GATTS_CHAR_NUM_BATTERY_LEVEL 0
-#define GATTS_CHAR_NUM_BATTERY_VOLTAGE 1
-#define GATTS_NUM_HANDLE_BATTERY     8
+// Motor Service UUIDs and Handles
+#define GATTS_SERVICE_UUID_MOTOR         0x00DD
+#define GATTS_CHAR_UUID_MOTOR_SPEED      0xDD01
+#define GATTS_CHAR_UUID_MOTOR_DIRECTION  0xDD02
+#define GATTS_CHAR_NUM_MOTOR_SPEED       0
+#define GATTS_CHAR_NUM_MOTOR_DIRECTION   1
+#define GATTS_NUM_HANDLE_MOTOR           8
 
-//Service motor
-#define GATTS_SERVICE_UUID_MOTOR   0x00DD
-#define GATTS_CHAR_UUID_MOTOR_SPEED  0xDD01
-#define GATTS_CHAR_UUID_MOTOR_DIRECTION 0xDD02
-#define GATTS_CHAR_NUM_MOTOR_SPEED 0
-#define GATTS_CHAR_NUM_MOTOR_DIRECTION 1
-#define GATTS_NUM_HANDLE_MOTOR     8
+// General BLE Configuration
+#define TEST_MANUFACTURER_DATA_LEN       17
+#define GATTS_DEMO_CHAR_VAL_LEN_MAX      0x40
+#define PREPARE_BUF_MAX_SIZE             1024
 
-#define TEST_MANUFACTURER_DATA_LEN  17
-#define GATTS_DEMO_CHAR_VAL_LEN_MAX 0x40
-#define PREPARE_BUF_MAX_SIZE 1024
+// Advertising Configuration Flags
+#define ADV_CONFIG_FLAG                  (1 << 0)
+#define SCAN_RSP_CONFIG_FLAG             (1 << 1)
 
-#define ADV_CONFIG_FLAG      (1 << 0)
-#define SCAN_RSP_CONFIG_FLAG (1 << 1)
+// Profile Identifiers
+#define PROFILE_NUM                      2
+#define PROFILE_BATTERY_APP_ID           0
+#define PROFILE_MOTOR_APP_ID             1
 
-#define PROFILE_NUM 2
-#define PROFILE_BATTERY_APP_ID 0
-#define PROFILE_MOTOR_APP_ID 1
+// Logging Tag
+#define GATTS_TAG                        "GATTS_DEMO"
 
-#define GATTS_TAG "GATTS_DEMO"
-
-// Data Types
-typedef struct  {
-    uint16_t handle;
-    esp_bt_uuid_t uuid;
-    esp_gatt_perm_t perm;
-    esp_gatt_char_prop_t property;
-    esp_attr_value_t attr_val;
-    uint16_t descr_handle;
-    esp_bt_uuid_t descr_uuid;
-    esp_attr_value_t cccd_val;
+// BLE Characteristic Structure
+typedef struct {
+    uint16_t handle;                     // Handle for the characteristic
+    esp_bt_uuid_t uuid;                  // UUID of the characteristic
+    esp_gatt_perm_t perm;                // Permissions for the characteristic
+    esp_gatt_char_prop_t property;       // Properties of the characteristic
+    esp_attr_value_t attr_val;           // Attribute value of the characteristic
+    uint16_t descr_handle;               // Handle for the descriptor
+    esp_bt_uuid_t descr_uuid;            // UUID of the descriptor
+    esp_attr_value_t cccd_val;           // CCCD value for notifications/indications
 } ble_characteristic_t;
 
+// GATT Profile Instance Structure
 typedef struct {
-    esp_gatts_cb_t gatts_cb;
-    uint16_t gatts_if;
-    uint16_t app_id;
-    uint16_t conn_id;
-    uint16_t service_handle;
-    esp_gatt_srvc_id_t service_id;
-    ble_characteristic_t chars[2]; // Array of characteristics
-    uint8_t chars_init_counter;
-    uint8_t numHandle;
-}gatts_profile_inst_t;
+    esp_gatts_cb_t gatts_cb;             // Callback function for GATT events
+    uint16_t gatts_if;                   // GATT interface
+    uint16_t app_id;                     // Application ID
+    uint16_t conn_id;                    // Connection ID
+    uint16_t service_handle;             // Handle for the service
+    esp_gatt_srvc_id_t service_id;       // Service ID
+    ble_characteristic_t chars[2];       // Array of characteristics
+    uint8_t chars_init_counter;          // Counter for initialized characteristics
+    uint8_t numHandle;                   // Number of handles for the service
+} gatts_profile_inst_t;
 
 // Local Variables
-static float battery_voltage = 3.7f;
-static uint8_t battery_level = 97;
-static uint8_t battery_voltage_buf[] = {0x00, 0x00, 0x00, 0x00};
-static bool service_connected = false;
-static uint8_t motor_speed = 0x00u;
-static uint8_t motor_direction = 0x00u;
+static float battery_voltage = 3.7f;     // Current battery voltage
+static uint8_t battery_level = 97;       // Current battery level percentage
+static uint8_t battery_voltage_buf[] = {0x00, 0x00, 0x00, 0x00}; // Buffer for battery voltage
+static bool service_connected = false;  // Connection status
+static uint8_t motor_speed = 0x00u;     // Current motor speed
+static uint8_t motor_direction = 0x00u; // Current motor direction
 
- // CCCD for Battery Level
-static uint8_t cccd_value_battery_level[2] = {0x00, 0x00}; // Default value: notifications/indications disabled
+// CCCD Values for Notifications/Indications
+static uint8_t cccd_value_battery_level[2] = {0x00, 0x00}; // Battery Level
+static uint8_t cccd_value_battery_voltage[2] = {0x00, 0x00}; // Battery Voltage
+static uint8_t cccd_value_motor_speed[2] = {0x00, 0x00}; // Motor Speed
+static uint8_t cccd_value_motor_direction[2] = {0x00, 0x00}; // Motor Direction
 
-// CCCD for Battery Voltage
-static uint8_t cccd_value_battery_voltage[2] = {0x00, 0x00}; // Default value: notifications/indications disabled
-
-// CCCD for motor speed
-static uint8_t cccd_value_motor_speed[2] = {0x00, 0x00}; // Default value: notifications/indications disabled
-
-// CCCD for motor direction
-static uint8_t cccd_value_motor_direction[2] = {0x00, 0x00}; // Default value: notifications/indications disabled
-
-
+// Device Name and Advertising Configuration
 static char test_device_name[ESP_BLE_ADV_NAME_LEN_MAX] = "ESP_GATTS_DEMO";
 static uint8_t adv_config_done = 0;
 
-
+// Advertising Data
 #ifdef CONFIG_EXAMPLE_SET_RAW_ADV_DATA
+// Raw advertising data
 static uint8_t raw_adv_data[] = {
     /* Flags */
     0x02, ESP_BLE_AD_TYPE_FLAG, 0x06,               // Length 2, Data Type ESP_BLE_AD_TYPE_FLAG, Data 1 (LE General Discoverable Mode, BR/EDR Not Supported)
@@ -111,12 +109,13 @@ static uint8_t raw_adv_data[] = {
     0x03, ESP_BLE_AD_TYPE_16SRV_CMPL, 0xAB, 0xCD    // Length 3, Data Type ESP_BLE_AD_TYPE_16SRV_CMPL, Data 3 (UUID)
 };
 
+// Raw scan response data
 static uint8_t raw_scan_rsp_data[] = {
     /* Complete Local Name */
     0x0F, ESP_BLE_AD_TYPE_NAME_CMPL, 'E', 'S', 'P', '_', 'G', 'A', 'T', 'T', 'S', '_', 'D', 'E', 'M', 'O'   // Length 15, Data Type ESP_BLE_AD_TYPE_NAME_CMPL, Data (ESP_GATTS_DEMO)
 };
 #else
-
+// Advertising service UUIDs
 static uint8_t adv_service_uuid128[32] = {
     /* LSB <--------------------------------------------------------------------------------> MSB */
     //first uuid, 16bit, [12],[13] is the value
@@ -125,9 +124,7 @@ static uint8_t adv_service_uuid128[32] = {
     0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0xDD, 0x00, 0x00, 0x00,
 };
 
-// The length of adv data must be less than 31 bytes
-//static uint8_t test_manufacturer[TEST_MANUFACTURER_DATA_LEN] =  {0x12, 0x23, 0x45, 0x56};
-//adv data
+// Advertising data configuration
 static esp_ble_adv_data_t adv_data = {
     .set_scan_rsp = false,
     .include_name = true,
@@ -143,7 +140,7 @@ static esp_ble_adv_data_t adv_data = {
     .p_service_uuid = adv_service_uuid128,
     .flag = (ESP_BLE_ADV_FLAG_GEN_DISC | ESP_BLE_ADV_FLAG_BREDR_NOT_SPT),
 };
-// scan response data
+// Scan response data configuration
 static esp_ble_adv_data_t scan_rsp_data = {
     .set_scan_rsp = true,
     .include_name = true,
@@ -162,6 +159,7 @@ static esp_ble_adv_data_t scan_rsp_data = {
 
 #endif /* CONFIG_SET_RAW_ADV_DATA */
 
+// Advertising parameters
 static esp_ble_adv_params_t adv_params = {
     .adv_int_min        = 0x20,
     .adv_int_max        = 0x40,
@@ -173,7 +171,9 @@ static esp_ble_adv_params_t adv_params = {
     .adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
 };
 
-
+// Local function declarations needed for the BLE driver service
+static void gattsProfileBatteryEventHandler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+static void gattsProfileMotorEventHandler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 
 /* One gatt-based profile one app_id and one gatts_if, this array will store the gatts_if returned by ESP_GATTS_REG_EVT */
 static gatts_profile_inst_t profile_tab[PROFILE_NUM] = {
@@ -307,8 +307,6 @@ static gatts_profile_inst_t profile_tab[PROFILE_NUM] = {
 
 ///Declare the static function
 static void gattsProfileGenericEventHandler(uint8_t app_id, esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-static void gattsProfileBatteryEventHandler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-static void gattsProfileMotorEventHandler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 static void gapEventHandler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param);
 static void gattsEventHandler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 static ble_characteristic_t *findCharacteristicByHandle(gatts_profile_inst_t* profilePtr, uint16_t handle);
@@ -317,7 +315,7 @@ static ble_characteristic_t* findCharacteristicByDescriptorHandle(gatts_profile_
 static uint16_t convertUint8ArrToUint16(uint8_t *arr);
 static void convertFloatToUint8Arr(uint8_t *buf, float voltage);
 
-//Global Functions
+// Global Functions
 void BleDriverSrv_Setup(void)
 {
     esp_err_t ret;
@@ -486,7 +484,7 @@ uint8_t BleDriverSrv_GetMotorDirection(void) {
     return motor_direction;
 }
 
-//Local functions
+// Local Functions
 static void convertFloatToUint8Arr(uint8_t *buf, float voltage)
 {
     // Convert float to uint8_t array (4 bytes)
@@ -796,12 +794,8 @@ static void gattsProfileGenericEventHandler(uint8_t app_id, esp_gatts_cb_event_t
             ESP_LOGI(GATTS_TAG, "Advertising started after disconnection");
         }
         profile_tab[app_id].conn_id = 0xFF;
-        profile_tab[app_id].chars_init_counter = 0;
-        profile_tab[app_id].service_handle = 0;
         for(int i = 0; i < 2; i++)
-        {
-            profile_tab[app_id].chars[i].handle = 0;
-            profile_tab[app_id].chars[i].descr_handle = 0;            
+        {        
             // memset(profile_tab[app_id].chars[i].attr_val.attr_value,0, profile_tab[app_id].chars[i].attr_val.attr_len);
             memset(profile_tab[app_id].chars[i].cccd_val.attr_value,0, profile_tab[app_id].chars[i].cccd_val.attr_len);
         }
