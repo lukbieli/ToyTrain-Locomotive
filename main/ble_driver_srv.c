@@ -74,17 +74,6 @@ static char test_device_name[ESP_BLE_ADV_NAME_LEN_MAX] = "ESP_GATTS_DEMO";
 
 #define PREPARE_BUF_MAX_SIZE 1024
 
-static uint8_t char1_str[] = {0x11,0x22,0x33};
-static esp_gatt_char_prop_t a_property = 0;
-static esp_gatt_char_prop_t b_property = 0;
-
-static esp_attr_value_t gatts_demo_char1_val =
-{
-    .attr_max_len = GATTS_DEMO_CHAR_VAL_LEN_MAX,
-    .attr_len     = sizeof(char1_str),
-    .attr_value   = char1_str,
-};
-
 static uint8_t adv_config_done = 0;
 #define adv_config_flag      (1 << 0)
 #define scan_rsp_config_flag (1 << 1)
@@ -172,6 +161,7 @@ typedef struct  {
     esp_gatt_char_prop_t property;
     esp_attr_value_t attr_val;
     uint16_t descr_handle;
+    esp_bt_uuid_t descr_uuid;
     esp_attr_value_t cccd_val;
 } ble_characteristic_t;
 
@@ -183,12 +173,6 @@ typedef struct {
     uint16_t service_handle;
     esp_gatt_srvc_id_t service_id;
     ble_characteristic_t chars[2]; // Array of characteristics
-    uint16_t char_handle;
-    esp_bt_uuid_t char_uuid;
-    esp_gatt_perm_t perm;
-    esp_gatt_char_prop_t property;
-    uint16_t descr_handle;
-    esp_bt_uuid_t descr_uuid;
     uint8_t chars_init_counter;
     uint8_t numHandle;
 }gatts_profile_inst_t;
@@ -227,6 +211,10 @@ static gatts_profile_inst_t gl_profile_tab[PROFILE_NUM] = {
                     .attr_len = sizeof(cccd_value_battery_level),
                     .attr_value = cccd_value_battery_level,
                 },
+                .descr_uuid = {
+                    .len = ESP_UUID_LEN_16,
+                    .uuid = { .uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG },
+                },
             },
             [GATTS_CHAR_NUM_BATTERY_VOLTAGE] = {
                 .uuid = {
@@ -244,6 +232,10 @@ static gatts_profile_inst_t gl_profile_tab[PROFILE_NUM] = {
                     .attr_max_len = sizeof(cccd_value_battery_voltage),
                     .attr_len = sizeof(cccd_value_battery_voltage),
                     .attr_value = cccd_value_battery_voltage,
+                },
+                .descr_uuid = {
+                    .len = ESP_UUID_LEN_16,
+                    .uuid = { .uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG },
                 },
             },
         },
@@ -282,6 +274,10 @@ static gatts_profile_inst_t gl_profile_tab[PROFILE_NUM] = {
                     .attr_len = sizeof(cccd_value_motor_speed),
                     .attr_value = cccd_value_motor_speed,
                 },
+                .descr_uuid = {
+                    .len = ESP_UUID_LEN_16,
+                    .uuid = { .uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG },
+                },
             },
             [GATTS_CHAR_NUM_MOTOR_DIRECTION] = {
                 .uuid = {
@@ -300,6 +296,10 @@ static gatts_profile_inst_t gl_profile_tab[PROFILE_NUM] = {
                     .attr_len = sizeof(cccd_value_motor_direction),
                     .attr_value = cccd_value_motor_direction,
                 },
+                .descr_uuid = {
+                    .len = ESP_UUID_LEN_16,
+                    .uuid = { .uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG },
+                },
             },
         },
         .chars_init_counter = 0,
@@ -307,17 +307,6 @@ static gatts_profile_inst_t gl_profile_tab[PROFILE_NUM] = {
     },
 };
 
-typedef struct {
-    uint8_t                 *prepare_buf;
-    int                     prepare_len;
-} prepare_type_env_t;
-
-static prepare_type_env_t a_prepare_write_env;
-static prepare_type_env_t b_prepare_write_env;
-
-
-void example_write_event_env(esp_gatt_if_t gatts_if, prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param);
-void example_exec_write_event_env(prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param);
 
 static void convertFloatToUint8Buf(uint8_t *buf, float voltage)
 {
@@ -438,7 +427,7 @@ static void gatts_profile_generic_event_handler(uint8_t app_id, esp_gatts_cb_eve
     esp_gatt_status_t status = ESP_GATT_OK;
     switch (event) {
     case ESP_GATTS_REG_EVT:
-        ESP_LOGI(GATTS_TAG, "Service registered Profile%d", param->reg.app_id);
+        ESP_LOGI(GATTS_TAG, "Service registered Profile%d", app_id);
 
         esp_ble_gatts_create_service(gatts_if, &gl_profile_tab[app_id].service_id, gl_profile_tab[app_id].numHandle);
         break;
@@ -472,9 +461,7 @@ static void gatts_profile_generic_event_handler(uint8_t app_id, esp_gatts_cb_eve
 
                 if(gl_profile_tab[app_id].chars_init_counter < 2)
                 {
-                    gl_profile_tab[app_id].descr_uuid.len = ESP_UUID_LEN_16;
-                    gl_profile_tab[app_id].descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG;
-                    esp_err_t result = esp_ble_gatts_add_char_descr(gl_profile_tab[app_id].service_handle, &gl_profile_tab[app_id].descr_uuid,
+                    esp_err_t result = esp_ble_gatts_add_char_descr(gl_profile_tab[app_id].service_handle, &gl_profile_tab[app_id].chars[gl_profile_tab[app_id].chars_init_counter].descr_uuid,
                                                 ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
                                                 &(gl_profile_tab[app_id].chars[gl_profile_tab[app_id].chars_init_counter].cccd_val), NULL);
                     if (result) {
@@ -624,6 +611,23 @@ static void gatts_profile_generic_event_handler(uint8_t app_id, esp_gatts_cb_eve
     case ESP_GATTS_DISCONNECT_EVT:
         ESP_LOGI(GATTS_TAG, "Disconnected Profile%d, remote "ESP_BD_ADDR_STR", reason 0x%02x",
                 app_id, ESP_BD_ADDR_HEX(param->disconnect.remote_bda), param->disconnect.reason);
+        if(serviceConnected == true)
+        {
+            esp_ble_gap_start_advertising(&adv_params);
+            ESP_LOGI(GATTS_TAG, "Advertising started after disconnection");
+        }
+        gl_profile_tab[app_id].conn_id = 0xFF;
+        gl_profile_tab[app_id].chars_init_counter = 0;
+        gl_profile_tab[app_id].service_handle = 0;
+        for(int i = 0; i < 2; i++)
+        {
+            gl_profile_tab[app_id].chars[i].handle = 0;
+            gl_profile_tab[app_id].chars[i].descr_handle = 0;            
+            // memset(gl_profile_tab[app_id].chars[i].attr_val.attr_value,0, gl_profile_tab[app_id].chars[i].attr_val.attr_len);
+            memset(gl_profile_tab[app_id].chars[i].cccd_val.attr_value,0, gl_profile_tab[app_id].chars[i].cccd_val.attr_len);
+        }
+        gl_profile_tab[app_id].gatts_if = ESP_GATT_IF_NONE;
+        
         serviceConnected = false;
         break;
     default:
