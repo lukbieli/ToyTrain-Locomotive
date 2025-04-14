@@ -16,9 +16,12 @@ void locomotive_task(void *arg)
         // Your task code here
         vTaskDelay(5000 / portTICK_PERIOD_MS);
         // Example: Send data to the BLE characteristic
-        update_battery_level((--battery_level >= 0) ? battery_level : 0 ); // Update battery level to 50%
+        update_battery_level((--battery_level > 0) ? battery_level : 0 ); // Update battery level to 50%
         vTaskDelay(5000 / portTICK_PERIOD_MS);
         update_battery_voltage((4.2f * (float)battery_level) / 100.0f); // Update battery voltage to 4.1V
+        uint8_t motor_speed = read_motor_speed();
+        uint8_t motor_direction = read_motor_direction();
+        ESP_LOGI("Locomotive Task", "Motor Speed: %d, Motor Direction: %d", motor_speed, motor_direction);
     }
 }
 

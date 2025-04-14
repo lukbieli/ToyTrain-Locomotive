@@ -29,16 +29,6 @@ bool serviceConnected = false;
 uint8_t motorSpeed = 0x00u;
 uint8_t motorDirection = 0x00u;
 
-typedef struct  {
-    uint16_t handle;
-    esp_bt_uuid_t uuid;
-    esp_gatt_perm_t perm;
-    esp_gatt_char_prop_t property;
-    esp_attr_value_t attr_val;
-    uint16_t descr_handle;
-    esp_attr_value_t cccd_val;
-} ble_characteristic_t;
-
  // CCCD for Battery Level
 uint8_t cccd_value_battery_level[2] = {0x00, 0x00}; // Default value: notifications/indications disabled
 
@@ -48,31 +38,33 @@ uint8_t cccd_value_battery_voltage[2] = {0x00, 0x00}; // Default value: notifica
 // CCCD for motor speed
 uint8_t cccd_value_motor_speed[2] = {0x00, 0x00}; // Default value: notifications/indications disabled
 
+// CCCD for motor direction
+uint8_t cccd_value_motor_direction[2] = {0x00, 0x00}; // Default value: notifications/indications disabled
+
 #define GATTS_TAG "GATTS_DEMO"
 
 ///Declare the static function
-static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+static void gatts_profile_generic_event_handler(uint8_t app_id, esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
 static void gatts_profile_battery_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
-static void convert_to_battery_voltage(uint8_t *buf, float voltage);
+static void gatts_profile_motor_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param);
+static void convertFloatToUint8Buf(uint8_t *buf, float voltage);
 
-#define GATTS_SERVICE_UUID_TEST_A   0x00FF
-#define GATTS_CHAR_UUID_TEST_A      0xFF01
-#define GATTS_NUM_HANDLE_TEST_A     4
 
-#define GATTS_SERVICE_UUID_TEST_B   0x00EE
-#define GATTS_CHAR_UUID_TEST_B      0xEE01
-#define GATTS_NUM_HANDLE_TEST_B     4
-
+//Service Battery
 #define GATTS_SERVICE_UUID_BATTERY   0x180F
 #define GATTS_CHAR_UUID_BATTERY_LEVEL  0x2A19
 #define GATTS_CHAR_UUID_BATTERY_VOLTAGE 0x2B18
-// #define GATTS_SERVICE_UUID_BATTERY   0x00AA
-// #define GATTS_CHAR_UUID_BATTERY_LEVEL  0xAA01
 #define GATTS_CHAR_NUM_BATTERY_LEVEL 0
-// #define GATTS_CHAR_UUID_BATTERY_VOLTAGE 0xAA02
 #define GATTS_CHAR_NUM_BATTERY_VOLTAGE 1
 #define GATTS_NUM_HANDLE_BATTERY     8
+
+//Service motor
+#define GATTS_SERVICE_UUID_MOTOR   0x00DD
+#define GATTS_CHAR_UUID_MOTOR_SPEED  0xDD01
+#define GATTS_CHAR_UUID_MOTOR_DIRECTION 0xDD02
+#define GATTS_CHAR_NUM_MOTOR_SPEED 0
+#define GATTS_CHAR_NUM_MOTOR_DIRECTION 1
+#define GATTS_NUM_HANDLE_MOTOR     8
 
 static char test_device_name[ESP_BLE_ADV_NAME_LEN_MAX] = "ESP_GATTS_DEMO";
 
@@ -116,9 +108,9 @@ static uint8_t raw_scan_rsp_data[] = {
 static uint8_t adv_service_uuid128[32] = {
     /* LSB <--------------------------------------------------------------------------------> MSB */
     //first uuid, 16bit, [12],[13] is the value
-    0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0xEE, 0x00, 0x00, 0x00,
+    0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0x0F, 0x18, 0x00, 0x00,
     //second uuid, 32bit, [12], [13], [14], [15] is the value
-    0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0xFF, 0x00, 0x00, 0x00,
+    0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0xDD, 0x00, 0x00, 0x00,
 };
 
 // The length of adv data must be less than 31 bytes
@@ -169,14 +161,21 @@ static esp_ble_adv_params_t adv_params = {
     .adv_filter_policy = ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
 };
 
-#define PROFILE_NUM 3
-#define PROFILE_A_APP_ID 0
-#define PROFILE_B_APP_ID 1
-#define PROFILE_BATTERY_APP_ID 2
+#define PROFILE_NUM 2
+#define PROFILE_BATTERY_APP_ID 0
+#define PROFILE_MOTOR_APP_ID 1
 
+typedef struct  {
+    uint16_t handle;
+    esp_bt_uuid_t uuid;
+    esp_gatt_perm_t perm;
+    esp_gatt_char_prop_t property;
+    esp_attr_value_t attr_val;
+    uint16_t descr_handle;
+    esp_attr_value_t cccd_val;
+} ble_characteristic_t;
 
-
-struct gatts_profile_inst {
+typedef struct {
     esp_gatts_cb_t gatts_cb;
     uint16_t gatts_if;
     uint16_t app_id;
@@ -185,35 +184,36 @@ struct gatts_profile_inst {
     esp_gatt_srvc_id_t service_id;
     ble_characteristic_t chars[2]; // Array of characteristics
     uint16_t char_handle;
-    uint16_t char_handle_voltage; // New field for Battery Voltage
     esp_bt_uuid_t char_uuid;
     esp_gatt_perm_t perm;
     esp_gatt_char_prop_t property;
     uint16_t descr_handle;
-    uint16_t descr_handle_voltage;;
     esp_bt_uuid_t descr_uuid;
     uint8_t chars_init_counter;
-};
+    uint8_t numHandle;
+}gatts_profile_inst_t;
 
 /* One gatt-based profile one app_id and one gatts_if, this array will store the gatts_if returned by ESP_GATTS_REG_EVT */
-static struct gatts_profile_inst gl_profile_tab[PROFILE_NUM] = {
-    [PROFILE_A_APP_ID] = {
-        .gatts_cb = gatts_profile_a_event_handler,
-        .gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
-    },
-    [PROFILE_B_APP_ID] = {
-        .gatts_cb = gatts_profile_b_event_handler,                   /* This demo does not implement, similar as profile A */
-        .gatts_if = ESP_GATT_IF_NONE,       /* Not get the gatt_if, so initial is ESP_GATT_IF_NONE */
-    },
+static gatts_profile_inst_t gl_profile_tab[PROFILE_NUM] = {
     [PROFILE_BATTERY_APP_ID] = {
         .gatts_cb = gatts_profile_battery_event_handler,
         .gatts_if = ESP_GATT_IF_NONE,
         .app_id = PROFILE_BATTERY_APP_ID,
-        .chars={
+        .service_id = {
+            .is_primary = true,
+            .id = {
+                .inst_id = 0x00,
+                .uuid = {
+                    .uuid = {.uuid16 = GATTS_SERVICE_UUID_BATTERY},
+                    .len = ESP_UUID_LEN_16,
+                },
+            },
+        },
+        .chars = {
             [GATTS_CHAR_NUM_BATTERY_LEVEL] = {
                 .uuid = {
                     .len = ESP_UUID_LEN_16,
-                    .uuid = {.uuid16 = GATTS_CHAR_UUID_BATTERY_LEVEL},
+                    .uuid = { .uuid16 = GATTS_CHAR_UUID_BATTERY_LEVEL },
                 },
                 .perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
                 .property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_NOTIFY,
@@ -231,7 +231,7 @@ static struct gatts_profile_inst gl_profile_tab[PROFILE_NUM] = {
             [GATTS_CHAR_NUM_BATTERY_VOLTAGE] = {
                 .uuid = {
                     .len = ESP_UUID_LEN_16,
-                    .uuid = {.uuid16 = GATTS_CHAR_UUID_BATTERY_VOLTAGE},
+                    .uuid = { .uuid16 = GATTS_CHAR_UUID_BATTERY_VOLTAGE },
                 },
                 .perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
                 .property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_NOTIFY,
@@ -248,6 +248,62 @@ static struct gatts_profile_inst gl_profile_tab[PROFILE_NUM] = {
             },
         },
         .chars_init_counter = 0,
+        .numHandle = GATTS_NUM_HANDLE_BATTERY,
+    },
+    [PROFILE_MOTOR_APP_ID] = {
+        .gatts_cb = gatts_profile_motor_event_handler,
+        .gatts_if = ESP_GATT_IF_NONE,
+        .app_id = PROFILE_MOTOR_APP_ID,
+        .service_id = {
+            .is_primary = true,
+            .id = {
+                .inst_id = 0x00,
+                .uuid = {
+                    .uuid = {.uuid16 = GATTS_SERVICE_UUID_MOTOR},
+                    .len = ESP_UUID_LEN_16,
+                },
+            },
+        },
+        .chars = {
+            [GATTS_CHAR_NUM_MOTOR_SPEED] = {
+                .uuid = {
+                    .len = ESP_UUID_LEN_16,
+                    .uuid = { .uuid16 = GATTS_CHAR_UUID_MOTOR_SPEED },
+                },
+                .perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+                .property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_NOTIFY | ESP_GATT_CHAR_PROP_BIT_WRITE,
+                .attr_val = {
+                    .attr_max_len = sizeof(motorSpeed),
+                    .attr_len = sizeof(motorSpeed),
+                    .attr_value = &motorSpeed,
+                },
+                .cccd_val = {
+                    .attr_max_len = sizeof(cccd_value_motor_speed),
+                    .attr_len = sizeof(cccd_value_motor_speed),
+                    .attr_value = cccd_value_motor_speed,
+                },
+            },
+            [GATTS_CHAR_NUM_MOTOR_DIRECTION] = {
+                .uuid = {
+                    .len = ESP_UUID_LEN_16,
+                    .uuid = { .uuid16 = GATTS_CHAR_UUID_MOTOR_DIRECTION },
+                },
+                .perm = ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+                .property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_NOTIFY | ESP_GATT_CHAR_PROP_BIT_WRITE,
+                .attr_val = {
+                    .attr_max_len = sizeof(motorDirection),
+                    .attr_len = sizeof(motorDirection),
+                    .attr_value = &motorDirection,
+                },
+                .cccd_val = {
+                    .attr_max_len = sizeof(cccd_value_motor_direction),
+                    .attr_len = sizeof(cccd_value_motor_direction),
+                    .attr_value = cccd_value_motor_direction,
+                },
+            },
+        },
+        .chars_init_counter = 0,
+        .numHandle = GATTS_NUM_HANDLE_MOTOR,
     },
 };
 
@@ -263,7 +319,7 @@ static prepare_type_env_t b_prepare_write_env;
 void example_write_event_env(esp_gatt_if_t gatts_if, prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param);
 void example_exec_write_event_env(prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param);
 
-static void convert_to_battery_voltage(uint8_t *buf, float voltage)
+static void convertFloatToUint8Buf(uint8_t *buf, float voltage)
 {
     // Convert float to uint8_t array (4 bytes)
     buf[0] = (uint8_t)((int)(voltage * 1000) & 0xFF);         // LSB
@@ -340,432 +396,28 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
     }
 }
 
-void example_write_event_env(esp_gatt_if_t gatts_if, prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param){
-    esp_gatt_status_t status = ESP_GATT_OK;
-    if (param->write.need_rsp){
-        if (param->write.is_prep) {
-            if (param->write.offset > PREPARE_BUF_MAX_SIZE) {
-                status = ESP_GATT_INVALID_OFFSET;
-            } else if ((param->write.offset + param->write.len) > PREPARE_BUF_MAX_SIZE) {
-                status = ESP_GATT_INVALID_ATTR_LEN;
-            }
-            if (status == ESP_GATT_OK && prepare_write_env->prepare_buf == NULL) {
-                prepare_write_env->prepare_buf = (uint8_t *)malloc(PREPARE_BUF_MAX_SIZE*sizeof(uint8_t));
-                prepare_write_env->prepare_len = 0;
-                if (prepare_write_env->prepare_buf == NULL) {
-                    ESP_LOGE(GATTS_TAG, "Gatt_server prep no mem");
-                    status = ESP_GATT_NO_RESOURCES;
-                }
-            }
-
-            esp_gatt_rsp_t *gatt_rsp = (esp_gatt_rsp_t *)malloc(sizeof(esp_gatt_rsp_t));
-            if (gatt_rsp) {
-                gatt_rsp->attr_value.len = param->write.len;
-                gatt_rsp->attr_value.handle = param->write.handle;
-                gatt_rsp->attr_value.offset = param->write.offset;
-                gatt_rsp->attr_value.auth_req = ESP_GATT_AUTH_REQ_NONE;
-                memcpy(gatt_rsp->attr_value.value, param->write.value, param->write.len);
-                esp_err_t response_err = esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, status, gatt_rsp);
-                if (response_err != ESP_OK){
-                    ESP_LOGE(GATTS_TAG, "Send response error\n");
-                }
-                free(gatt_rsp);
-            } else {
-                ESP_LOGE(GATTS_TAG, "malloc failed, no resource to send response error\n");
-                status = ESP_GATT_NO_RESOURCES;
-            }
-            if (status != ESP_GATT_OK){
-                return;
-            }
-            memcpy(prepare_write_env->prepare_buf + param->write.offset,
-                   param->write.value,
-                   param->write.len);
-            prepare_write_env->prepare_len += param->write.len;
-
-        }else{
-            esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, status, NULL);
-        }
-    }
-}
-
-void example_exec_write_event_env(prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param){
-    if (param->exec_write.exec_write_flag == ESP_GATT_PREP_WRITE_EXEC){
-        ESP_LOG_BUFFER_HEX(GATTS_TAG, prepare_write_env->prepare_buf, prepare_write_env->prepare_len);
-    }else{
-        ESP_LOGI(GATTS_TAG,"Prepare write cancel");
-    }
-    if (prepare_write_env->prepare_buf) {
-        free(prepare_write_env->prepare_buf);
-        prepare_write_env->prepare_buf = NULL;
-    }
-    prepare_write_env->prepare_len = 0;
-}
-
-static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
-    switch (event) {
-    case ESP_GATTS_REG_EVT:
-        ESP_LOGI(GATTS_TAG, "GATT server register, status %d, app_id %d, gatts_if %d", param->reg.status, param->reg.app_id, gatts_if);
-        gl_profile_tab[PROFILE_A_APP_ID].service_id.is_primary = true;
-        gl_profile_tab[PROFILE_A_APP_ID].service_id.id.inst_id = 0x00;
-        gl_profile_tab[PROFILE_A_APP_ID].service_id.id.uuid.len = ESP_UUID_LEN_16;
-        gl_profile_tab[PROFILE_A_APP_ID].service_id.id.uuid.uuid.uuid16 = GATTS_SERVICE_UUID_TEST_A;
-
-        esp_err_t set_dev_name_ret = esp_ble_gap_set_device_name(test_device_name);
-        if (set_dev_name_ret){
-            ESP_LOGE(GATTS_TAG, "set device name failed, error code = %x", set_dev_name_ret);
-        }
-#ifdef CONFIG_EXAMPLE_SET_RAW_ADV_DATA
-        esp_err_t raw_adv_ret = esp_ble_gap_config_adv_data_raw(raw_adv_data, sizeof(raw_adv_data));
-        if (raw_adv_ret){
-            ESP_LOGE(GATTS_TAG, "config raw adv data failed, error code = %x ", raw_adv_ret);
-        }
-        adv_config_done |= adv_config_flag;
-        esp_err_t raw_scan_ret = esp_ble_gap_config_scan_rsp_data_raw(raw_scan_rsp_data, sizeof(raw_scan_rsp_data));
-        if (raw_scan_ret){
-            ESP_LOGE(GATTS_TAG, "config raw scan rsp data failed, error code = %x", raw_scan_ret);
-        }
-        adv_config_done |= scan_rsp_config_flag;
-#else
-        //config adv data
-        esp_err_t ret = esp_ble_gap_config_adv_data(&adv_data);
-        if (ret){
-            ESP_LOGE(GATTS_TAG, "config adv data failed, error code = %x", ret);
-        }
-        adv_config_done |= adv_config_flag;
-        //config scan response data
-        ret = esp_ble_gap_config_adv_data(&scan_rsp_data);
-        if (ret){
-            ESP_LOGE(GATTS_TAG, "config scan response data failed, error code = %x", ret);
-        }
-        adv_config_done |= scan_rsp_config_flag;
-
-#endif
-        esp_ble_gatts_create_service(gatts_if, &gl_profile_tab[PROFILE_A_APP_ID].service_id, GATTS_NUM_HANDLE_TEST_A);
-        break;
-    case ESP_GATTS_READ_EVT: {
-        ESP_LOGI(GATTS_TAG, "Characteristic read A, conn_id %d, trans_id %" PRIu32 ", handle %d", param->read.conn_id, param->read.trans_id, param->read.handle);
-        esp_gatt_rsp_t rsp;
-        memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
-        rsp.attr_value.handle = param->read.handle;
-        rsp.attr_value.len = 4;
-        rsp.attr_value.value[0] = 0xde;
-        rsp.attr_value.value[1] = 0xed;
-        rsp.attr_value.value[2] = 0xbe;
-        rsp.attr_value.value[3] = 0xef;
-        esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
-                                    ESP_GATT_OK, &rsp);
-        break;
-    }
-    case ESP_GATTS_WRITE_EVT: {
-        ESP_LOGI(GATTS_TAG, "Characteristic write A, conn_id %d, trans_id %" PRIu32 ", handle %d", param->write.conn_id, param->write.trans_id, param->write.handle);
-        if (!param->write.is_prep){
-            ESP_LOGI(GATTS_TAG, "value len %d, value ", param->write.len);
-            ESP_LOG_BUFFER_HEX(GATTS_TAG, param->write.value, param->write.len);
-            if (gl_profile_tab[PROFILE_A_APP_ID].descr_handle == param->write.handle && param->write.len == 2){
-                uint16_t descr_value = param->write.value[1]<<8 | param->write.value[0];
-                if (descr_value == 0x0001){
-                    if (a_property & ESP_GATT_CHAR_PROP_BIT_NOTIFY){
-                        ESP_LOGI(GATTS_TAG, "Notification enable");
-                        uint8_t notify_data[15];
-                        for (int i = 0; i < sizeof(notify_data); ++i)
-                        {
-                            notify_data[i] = i%0xff;
-                        }
-                        //the size of notify_data[] need less than MTU size
-                        esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[PROFILE_A_APP_ID].char_handle,
-                                                sizeof(notify_data), notify_data, false);
-                    }
-                }else if (descr_value == 0x0002){
-                    if (a_property & ESP_GATT_CHAR_PROP_BIT_INDICATE){
-                        ESP_LOGI(GATTS_TAG, "Indication enable");
-                        uint8_t indicate_data[15];
-                        for (int i = 0; i < sizeof(indicate_data); ++i)
-                        {
-                            indicate_data[i] = i%0xff;
-                        }
-                        //the size of indicate_data[] need less than MTU size
-                        esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[PROFILE_A_APP_ID].char_handle,
-                                                sizeof(indicate_data), indicate_data, true);
-                    }
-                }
-                else if (descr_value == 0x0000){
-                    ESP_LOGI(GATTS_TAG, "Notification/Indication disable");
-                }else{
-                    ESP_LOGE(GATTS_TAG, "Unknown descriptor value");
-                    ESP_LOG_BUFFER_HEX(GATTS_TAG, param->write.value, param->write.len);
-                }
-
-            }
-        }
-        example_write_event_env(gatts_if, &a_prepare_write_env, param);
-        break;
-    }
-    case ESP_GATTS_EXEC_WRITE_EVT:
-        ESP_LOGI(GATTS_TAG,"Execute write A");
-        esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL);
-        example_exec_write_event_env(&a_prepare_write_env, param);
-        break;
-    case ESP_GATTS_MTU_EVT:
-        ESP_LOGI(GATTS_TAG, "MTU exchange A, MTU %d", param->mtu.mtu);
-        break;
-    case ESP_GATTS_UNREG_EVT:
-        break;
-    case ESP_GATTS_CREATE_EVT:
-        ESP_LOGI(GATTS_TAG, "Service create A, status %d, service_handle %d", param->create.status, param->create.service_handle);
-        gl_profile_tab[PROFILE_A_APP_ID].service_handle = param->create.service_handle;
-        gl_profile_tab[PROFILE_A_APP_ID].char_uuid.len = ESP_UUID_LEN_16;
-        gl_profile_tab[PROFILE_A_APP_ID].char_uuid.uuid.uuid16 = GATTS_CHAR_UUID_TEST_A;
-
-        esp_ble_gatts_start_service(gl_profile_tab[PROFILE_A_APP_ID].service_handle);
-        a_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY;
-        esp_err_t add_char_ret = esp_ble_gatts_add_char(gl_profile_tab[PROFILE_A_APP_ID].service_handle, &gl_profile_tab[PROFILE_A_APP_ID].char_uuid,
-                                                        ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-                                                        a_property,
-                                                        &gatts_demo_char1_val, NULL);
-        if (add_char_ret){
-            ESP_LOGE(GATTS_TAG, "add char failed, error code =%x",add_char_ret);
-        }
-        break;
-    case ESP_GATTS_ADD_INCL_SRVC_EVT:
-        break;
-    case ESP_GATTS_ADD_CHAR_EVT: {
-        uint16_t length = 0;
-        const uint8_t *prf_char;
-
-        ESP_LOGI(GATTS_TAG, "Characteristic add A, status %d, attr_handle %d, service_handle %d",
-                param->add_char.status, param->add_char.attr_handle, param->add_char.service_handle);
-        gl_profile_tab[PROFILE_A_APP_ID].char_handle = param->add_char.attr_handle;
-        gl_profile_tab[PROFILE_A_APP_ID].descr_uuid.len = ESP_UUID_LEN_16;
-        gl_profile_tab[PROFILE_A_APP_ID].descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG;
-        esp_err_t get_attr_ret = esp_ble_gatts_get_attr_value(param->add_char.attr_handle,  &length, &prf_char);
-        if (get_attr_ret == ESP_FAIL){
-            ESP_LOGE(GATTS_TAG, "ILLEGAL HANDLE");
-        }
-
-        ESP_LOGI(GATTS_TAG, "the gatts demo char length = %x", length);
-        for(int i = 0; i < length; i++){
-            ESP_LOGI(GATTS_TAG, "prf_char[%x] =%x",i,prf_char[i]);
-        }
-        esp_err_t add_descr_ret = esp_ble_gatts_add_char_descr(gl_profile_tab[PROFILE_A_APP_ID].service_handle, &gl_profile_tab[PROFILE_A_APP_ID].descr_uuid,
-                                                                ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE, NULL, NULL);
-        if (add_descr_ret){
-            ESP_LOGE(GATTS_TAG, "add char descr failed, error code =%x", add_descr_ret);
-        }
-        break;
-    }
-    case ESP_GATTS_ADD_CHAR_DESCR_EVT:
-        gl_profile_tab[PROFILE_A_APP_ID].descr_handle = param->add_char_descr.attr_handle;
-        ESP_LOGI(GATTS_TAG, "Descriptor add A, status %d, attr_handle %d, service_handle %d",
-                 param->add_char_descr.status, param->add_char_descr.attr_handle, param->add_char_descr.service_handle);
-        break;
-    case ESP_GATTS_DELETE_EVT:
-        break;
-    case ESP_GATTS_START_EVT:
-        ESP_LOGI(GATTS_TAG, "Service start A, status %d, service_handle %d",
-                 param->start.status, param->start.service_handle);
-        break;
-    case ESP_GATTS_STOP_EVT:
-        break;
-    case ESP_GATTS_CONNECT_EVT: {
-        esp_ble_conn_update_params_t conn_params = {0};
-        memcpy(conn_params.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
-        /* For the IOS system, please reference the apple official documents about the ble connection parameters restrictions. */
-        conn_params.latency = 0;
-        conn_params.max_int = 0x30;    // max_int = 0x20*1.25ms = 40ms
-        conn_params.min_int = 0x20;    // min_int = 0x10*1.25ms = 20ms
-        conn_params.timeout = 600;    // timeout = 400*10ms = 4000ms
-        ESP_LOGI(GATTS_TAG, "Connected A, conn_id %u, remote "ESP_BD_ADDR_STR"",
-                 param->connect.conn_id, ESP_BD_ADDR_HEX(param->connect.remote_bda));
-        gl_profile_tab[PROFILE_A_APP_ID].conn_id = param->connect.conn_id;
-        //start sent the update connection parameters to the peer device.
-        esp_ble_gap_update_conn_params(&conn_params);
-        break;
-    }
-    case ESP_GATTS_DISCONNECT_EVT:
-        ESP_LOGI(GATTS_TAG, "Disconnected A, remote "ESP_BD_ADDR_STR", reason 0x%02x",
-                 ESP_BD_ADDR_HEX(param->disconnect.remote_bda), param->disconnect.reason);
-        esp_ble_gap_start_advertising(&adv_params);
-        break;
-    case ESP_GATTS_CONF_EVT:
-        ESP_LOGI(GATTS_TAG, "Confirm receive A, status %d, attr_handle %d", param->conf.status, param->conf.handle);
-        if (param->conf.status != ESP_GATT_OK){
-            ESP_LOG_BUFFER_HEX(GATTS_TAG, param->conf.value, param->conf.len);
-        }
-        break;
-    case ESP_GATTS_OPEN_EVT:
-    case ESP_GATTS_CANCEL_OPEN_EVT:
-    case ESP_GATTS_CLOSE_EVT:
-    case ESP_GATTS_LISTEN_EVT:
-    case ESP_GATTS_CONGEST_EVT:
-    default:
-        break;
-    }
-}
-
-static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
-    switch (event) {
-    case ESP_GATTS_REG_EVT:
-        ESP_LOGI(GATTS_TAG, "GATT server register C, status %d, app_id %d, gatts_if %d", param->reg.status, param->reg.app_id, gatts_if);
-        gl_profile_tab[PROFILE_B_APP_ID].service_id.is_primary = true;
-        gl_profile_tab[PROFILE_B_APP_ID].service_id.id.inst_id = 0x00;
-        gl_profile_tab[PROFILE_B_APP_ID].service_id.id.uuid.len = ESP_UUID_LEN_16;
-        gl_profile_tab[PROFILE_B_APP_ID].service_id.id.uuid.uuid.uuid16 = GATTS_SERVICE_UUID_TEST_B;
-
-        esp_ble_gatts_create_service(gatts_if, &gl_profile_tab[PROFILE_B_APP_ID].service_id, GATTS_NUM_HANDLE_TEST_B);
-        break;
-    case ESP_GATTS_READ_EVT: {
-        ESP_LOGI(GATTS_TAG, "Characteristic read B, conn_id %d, trans_id %" PRIu32 ", handle %d", param->read.conn_id, param->read.trans_id, param->read.handle);
-        esp_gatt_rsp_t rsp;
-        memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
-        rsp.attr_value.handle = param->read.handle;
-        rsp.attr_value.len = 4;
-        rsp.attr_value.value[0] = 0xde;
-        rsp.attr_value.value[1] = 0xed;
-        rsp.attr_value.value[2] = 0xbe;
-        rsp.attr_value.value[3] = 0xef;
-        esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
-                                    ESP_GATT_OK, &rsp);
-        break;
-    }
-    case ESP_GATTS_WRITE_EVT: {
-        ESP_LOGI(GATTS_TAG, "Characteristic write B, conn_id %d, trans_id %" PRIu32 ", handle %d", param->write.conn_id, param->write.trans_id, param->write.handle);
-        if (!param->write.is_prep){
-            ESP_LOGI(GATTS_TAG, "value len %d, value ", param->write.len);
-            ESP_LOG_BUFFER_HEX(GATTS_TAG, param->write.value, param->write.len);
-            if (gl_profile_tab[PROFILE_B_APP_ID].descr_handle == param->write.handle && param->write.len == 2){
-                uint16_t descr_value= param->write.value[1]<<8 | param->write.value[0];
-                if (descr_value == 0x0001){
-                    if (b_property & ESP_GATT_CHAR_PROP_BIT_NOTIFY) {
-                        ESP_LOGI(GATTS_TAG, "Notification enable");
-                        uint8_t notify_data[15];
-                        for (int i = 0; i < sizeof(notify_data); ++i)
-                        {
-                            notify_data[i] = i%0xff;
-                        }
-                        //the size of notify_data[] need less than MTU size
-                        esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[PROFILE_B_APP_ID].char_handle,
-                                                sizeof(notify_data), notify_data, false);
-                    }
-                }else if (descr_value == 0x0002){
-                    if (b_property & ESP_GATT_CHAR_PROP_BIT_INDICATE){
-                        ESP_LOGI(GATTS_TAG, "Indication enable");
-                        uint8_t indicate_data[15];
-                        for (int i = 0; i < sizeof(indicate_data); ++i)
-                        {
-                            indicate_data[i] = i%0xff;
-                        }
-                        //the size of indicate_data[] need less than MTU size
-                        esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[PROFILE_B_APP_ID].char_handle,
-                                                sizeof(indicate_data), indicate_data, true);
-                    }
-                }
-                else if (descr_value == 0x0000){
-                    ESP_LOGI(GATTS_TAG, "Notification/Indication disable");
-                }else{
-                    ESP_LOGE(GATTS_TAG, "Unknown value");
-                }
-
-            }
-        }
-        example_write_event_env(gatts_if, &b_prepare_write_env, param);
-        break;
-    }
-    case ESP_GATTS_EXEC_WRITE_EVT:
-        ESP_LOGI(GATTS_TAG,"Execute write B");
-        esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL);
-        example_exec_write_event_env(&b_prepare_write_env, param);
-        break;
-    case ESP_GATTS_MTU_EVT:
-        ESP_LOGI(GATTS_TAG, "MTU exchange B, MTU %d", param->mtu.mtu);
-        break;
-    case ESP_GATTS_UNREG_EVT:
-        break;
-    case ESP_GATTS_CREATE_EVT:
-        ESP_LOGI(GATTS_TAG, "Service create B, status %d,  service_handle %d", param->create.status, param->create.service_handle);
-        gl_profile_tab[PROFILE_B_APP_ID].service_handle = param->create.service_handle;
-        gl_profile_tab[PROFILE_B_APP_ID].char_uuid.len = ESP_UUID_LEN_16;
-        gl_profile_tab[PROFILE_B_APP_ID].char_uuid.uuid.uuid16 = GATTS_CHAR_UUID_TEST_B;
-
-        esp_ble_gatts_start_service(gl_profile_tab[PROFILE_B_APP_ID].service_handle);
-        b_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY;
-        esp_err_t add_char_ret =esp_ble_gatts_add_char( gl_profile_tab[PROFILE_B_APP_ID].service_handle, &gl_profile_tab[PROFILE_B_APP_ID].char_uuid,
-                                                        ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-                                                        b_property,
-                                                        NULL, NULL);
-        if (add_char_ret){
-            ESP_LOGE(GATTS_TAG, "add char failed, error code =%x",add_char_ret);
-        }
-        break;
-    case ESP_GATTS_ADD_INCL_SRVC_EVT:
-        break;
-    case ESP_GATTS_ADD_CHAR_EVT:
-        ESP_LOGI(GATTS_TAG, "Characteristic add B, status %d, attr_handle %d, service_handle %d",
-                 param->add_char.status, param->add_char.attr_handle, param->add_char.service_handle);
-
-        gl_profile_tab[PROFILE_B_APP_ID].char_handle = param->add_char.attr_handle;
-        gl_profile_tab[PROFILE_B_APP_ID].descr_uuid.len = ESP_UUID_LEN_16;
-        gl_profile_tab[PROFILE_B_APP_ID].descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG;
-        esp_ble_gatts_add_char_descr(gl_profile_tab[PROFILE_B_APP_ID].service_handle, &gl_profile_tab[PROFILE_B_APP_ID].descr_uuid,
-                                     ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-                                     NULL, NULL);
-        break;
-    case ESP_GATTS_ADD_CHAR_DESCR_EVT:
-        gl_profile_tab[PROFILE_B_APP_ID].descr_handle = param->add_char_descr.attr_handle;
-        ESP_LOGI(GATTS_TAG, "Descriptor add B, status %d, attr_handle %d, service_handle %d",
-                 param->add_char_descr.status, param->add_char_descr.attr_handle, param->add_char_descr.service_handle);
-        break;
-    case ESP_GATTS_DELETE_EVT:
-        break;
-    case ESP_GATTS_START_EVT:
-        ESP_LOGI(GATTS_TAG, "Service start B, status %d, service_handle %d",
-                 param->start.status, param->start.service_handle);
-        break;
-    case ESP_GATTS_STOP_EVT:
-        break;
-    case ESP_GATTS_CONNECT_EVT:
-        ESP_LOGI(GATTS_TAG, "Connected B, conn_id %d, remote "ESP_BD_ADDR_STR"",
-                 param->connect.conn_id, ESP_BD_ADDR_HEX(param->connect.remote_bda));
-        gl_profile_tab[PROFILE_B_APP_ID].conn_id = param->connect.conn_id;
-        break;
-    case ESP_GATTS_CONF_EVT:
-        ESP_LOGI(GATTS_TAG, "Confirm receive B, status %d, attr_handle %d", param->conf.status, param->conf.handle);
-        if (param->conf.status != ESP_GATT_OK){
-            ESP_LOG_BUFFER_HEX(GATTS_TAG, param->conf.value, param->conf.len);
-        }
-    break;
-    case ESP_GATTS_DISCONNECT_EVT:
-    case ESP_GATTS_OPEN_EVT:
-    case ESP_GATTS_CANCEL_OPEN_EVT:
-    case ESP_GATTS_CLOSE_EVT:
-    case ESP_GATTS_LISTEN_EVT:
-    case ESP_GATTS_CONGEST_EVT:
-    default:
-        break;
-    }
-}
-
-static ble_characteristic_t *get_characteristic_by_handle(uint16_t handle) {
-    for (int i = 0; i < GATTS_CHAR_NUM_BATTERY_VOLTAGE+1; i++) {
-        if (gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[i].handle == handle) {
-            return &gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[i];
+static ble_characteristic_t *get_characteristic_by_handle(gatts_profile_inst_t* profilePtr, uint16_t handle) {
+    for (int i = 0; i < 2; i++) {
+        if (profilePtr->chars[i].handle == handle) {
+            return &profilePtr->chars[i];
         }
     }
     return NULL;
 }
 
-static ble_characteristic_t* get_characteristic_by_uuid(uint16_t uuid) {
+static ble_characteristic_t* get_characteristic_by_uuid(gatts_profile_inst_t* profilePtr,uint16_t uuid) {
     for (int i = 0; i < GATTS_CHAR_NUM_BATTERY_VOLTAGE+1; i++) {
-        if (gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[i].uuid.uuid.uuid16 == uuid) {
-            return &gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[i];
+        if (profilePtr->chars[i].uuid.uuid.uuid16 == uuid) {
+            return &profilePtr->chars[i];
         }
     }
     return NULL;
 }
 
-static ble_characteristic_t* get_characteristic_by_descriptor_handle(uint16_t handle) {
+static ble_characteristic_t* get_characteristic_by_descriptor_handle(gatts_profile_inst_t* profilePtr,uint16_t handle) {
     for (int i = 0; i < GATTS_CHAR_NUM_BATTERY_VOLTAGE+1; i++) {
-        if (gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[i].descr_handle == handle) {
-            return &gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[i];
+        if (profilePtr->chars[i].descr_handle == handle) {
+            return &profilePtr->chars[i];
         }
     }
     return NULL;
@@ -778,89 +430,84 @@ static uint16_t convertArrToUint16(uint8_t *arr) {
     return value;
 }
 
-static void gatts_profile_battery_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
+
+
+//generic handler for all GATT events
+static void gatts_profile_generic_event_handler(uint8_t app_id, esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
     ble_characteristic_t* charPtr = NULL;
     esp_gatt_status_t status = ESP_GATT_OK;
     switch (event) {
     case ESP_GATTS_REG_EVT:
-        ESP_LOGI(GATTS_TAG, "Battery Service registered, app_id %d", param->reg.app_id);
-        gl_profile_tab[PROFILE_BATTERY_APP_ID].service_id.is_primary = true;
-        gl_profile_tab[PROFILE_BATTERY_APP_ID].service_id.id.inst_id = 0x00;
-        gl_profile_tab[PROFILE_BATTERY_APP_ID].service_id.id.uuid.len = ESP_UUID_LEN_16;
-        gl_profile_tab[PROFILE_BATTERY_APP_ID].service_id.id.uuid.uuid.uuid16 = GATTS_SERVICE_UUID_BATTERY;
+        ESP_LOGI(GATTS_TAG, "Service registered Profile%d", param->reg.app_id);
 
-        esp_ble_gatts_create_service(gatts_if, &gl_profile_tab[PROFILE_BATTERY_APP_ID].service_id, GATTS_NUM_HANDLE_BATTERY);
+        esp_ble_gatts_create_service(gatts_if, &gl_profile_tab[app_id].service_id, gl_profile_tab[app_id].numHandle);
         break;
 
     case ESP_GATTS_CREATE_EVT:
-        ESP_LOGI(GATTS_TAG, "Battery Service created, service_handle %d", param->create.service_handle);
-        gl_profile_tab[PROFILE_BATTERY_APP_ID].service_handle = param->create.service_handle;
+        ESP_LOGI(GATTS_TAG, "Service created Profile%d, service_handle %d", app_id, param->create.service_handle);
+        gl_profile_tab[app_id].service_handle = param->create.service_handle;
 
-        esp_ble_gatts_start_service(gl_profile_tab[PROFILE_BATTERY_APP_ID].service_handle);
+        esp_ble_gatts_start_service(gl_profile_tab[app_id].service_handle);
         
-        esp_err_t add_char_ret = esp_ble_gatts_add_char(gl_profile_tab[PROFILE_BATTERY_APP_ID].service_handle, 
-            &(gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[gl_profile_tab[PROFILE_BATTERY_APP_ID].chars_init_counter].uuid),
-            ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-            ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_NOTIFY,
-            &(gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[gl_profile_tab[PROFILE_BATTERY_APP_ID].chars_init_counter].attr_val),
+        esp_err_t add_char_ret = esp_ble_gatts_add_char(gl_profile_tab[app_id].service_handle, 
+            &(gl_profile_tab[app_id].chars[gl_profile_tab[app_id].chars_init_counter].uuid),
+            gl_profile_tab[app_id].chars[gl_profile_tab[app_id].chars_init_counter].perm,
+            gl_profile_tab[app_id].chars[gl_profile_tab[app_id].chars_init_counter].property,
+            &(gl_profile_tab[app_id].chars[gl_profile_tab[app_id].chars_init_counter].attr_val),
             NULL);
         if (add_char_ret) {
-            ESP_LOGE(GATTS_TAG, "Failed to add Battery Level characteristic, error code = %x", add_char_ret);
+            ESP_LOGE(GATTS_TAG, "Failed to add characteristic, error code = %x", add_char_ret);
         }
         
         break;
     case ESP_GATTS_ADD_CHAR_EVT:
-            ESP_LOGI(GATTS_TAG, "Characteristic add BAT, status %d, attr_handle %d, service_handle %d",
-                     param->add_char.status, param->add_char.attr_handle, param->add_char.service_handle);
-            if (param->add_char.char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_BATTERY_LEVEL) {
-                gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[GATTS_CHAR_NUM_BATTERY_LEVEL].handle = param->add_char.attr_handle;
-                // gl_profile_tab[PROFILE_BATTERY_APP_ID].char_handle = param->add_char.attr_handle;
-                ESP_LOGI(GATTS_TAG, "Battery Level characteristic handle: %d", gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[GATTS_CHAR_NUM_BATTERY_LEVEL].handle);
+            ESP_LOGI(GATTS_TAG, "Characteristic add Profile%d, status %d, attr_handle %d, service_handle %d",
+                     app_id, param->add_char.status, param->add_char.attr_handle, param->add_char.service_handle);
 
-
-            } else if (param->add_char.char_uuid.uuid.uuid16 == GATTS_CHAR_UUID_BATTERY_VOLTAGE) {
-                // gl_profile_tab[PROFILE_BATTERY_APP_ID].char_handle_voltage = param->add_char.attr_handle;
-                gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[GATTS_CHAR_NUM_BATTERY_VOLTAGE].handle = param->add_char.attr_handle;
-                ESP_LOGI(GATTS_TAG, "Battery Voltage characteristic handle: %d", gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[GATTS_CHAR_NUM_BATTERY_VOLTAGE].handle);
-
-            }
-            else {
-                ESP_LOGE(GATTS_TAG, "Unknown characteristic UUID");
-                return;
-            }
-            
-            if(gl_profile_tab[PROFILE_BATTERY_APP_ID].chars_init_counter < 2)
+            charPtr = get_characteristic_by_uuid(&gl_profile_tab[app_id], param->add_char.char_uuid.uuid.uuid16);
+            if(charPtr != NULL)
             {
-                gl_profile_tab[PROFILE_BATTERY_APP_ID].descr_uuid.len = ESP_UUID_LEN_16;
-                gl_profile_tab[PROFILE_BATTERY_APP_ID].descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG;
-                esp_err_t result = esp_ble_gatts_add_char_descr(gl_profile_tab[PROFILE_BATTERY_APP_ID].service_handle, &gl_profile_tab[PROFILE_BATTERY_APP_ID].descr_uuid,
-                                            ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-                                            &(gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[gl_profile_tab[PROFILE_BATTERY_APP_ID].chars_init_counter].cccd_val), NULL);
-                if (result) {
-                    ESP_LOGE(GATTS_TAG, "Failed to add descriptor, error code = %x", result);
+                charPtr->handle = param->add_char.attr_handle;
+                ESP_LOGI(GATTS_TAG, "Characteristic handle: %d assigned to uuid 0x%04x", charPtr->handle, param->add_char.char_uuid.uuid.uuid16);
+
+                if(gl_profile_tab[app_id].chars_init_counter < 2)
+                {
+                    gl_profile_tab[app_id].descr_uuid.len = ESP_UUID_LEN_16;
+                    gl_profile_tab[app_id].descr_uuid.uuid.uuid16 = ESP_GATT_UUID_CHAR_CLIENT_CONFIG;
+                    esp_err_t result = esp_ble_gatts_add_char_descr(gl_profile_tab[app_id].service_handle, &gl_profile_tab[app_id].descr_uuid,
+                                                ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
+                                                &(gl_profile_tab[app_id].chars[gl_profile_tab[app_id].chars_init_counter].cccd_val), NULL);
+                    if (result) {
+                        ESP_LOGE(GATTS_TAG, "Failed to add descriptor, error code = %x", result);
+                    }
+                }
+                else {
+                    ESP_LOGI(GATTS_TAG, "All characteristics and descriptors added add_char_evt.");
                 }
             }
-            else {
-                ESP_LOGI(GATTS_TAG, "All characteristics and descriptors added add_char_evt.");
+            else
+            {
+                ESP_LOGE(GATTS_TAG, "Unknown characteristic UUID 0x%04x", param->add_char.char_uuid.uuid.uuid16);
             }
+            
 
             break;
     case ESP_GATTS_ADD_CHAR_DESCR_EVT:
-        gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[gl_profile_tab[PROFILE_BATTERY_APP_ID].chars_init_counter].descr_handle = param->add_char_descr.attr_handle;
-        ESP_LOGI(GATTS_TAG, "Descriptor add BAT, status %d, attr_handle %d, service_handle %d",
-                    param->add_char_descr.status, param->add_char_descr.attr_handle, param->add_char_descr.service_handle);
+        gl_profile_tab[app_id].chars[gl_profile_tab[app_id].chars_init_counter].descr_handle = param->add_char_descr.attr_handle;
+        ESP_LOGI(GATTS_TAG, "Descriptor add Profile%d, status %d, attr_handle %d, service_handle %d",
+                app_id, param->add_char_descr.status, param->add_char_descr.attr_handle, param->add_char_descr.service_handle);
                     
-        if(++gl_profile_tab[PROFILE_BATTERY_APP_ID].chars_init_counter < 2)
+        if(++gl_profile_tab[app_id].chars_init_counter < 2)
         {
             ESP_LOGI(GATTS_TAG, "Adding next characteristic and descriptor...");
-            esp_err_t add_char_ret = esp_ble_gatts_add_char(gl_profile_tab[PROFILE_BATTERY_APP_ID].service_handle, 
-                &(gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[gl_profile_tab[PROFILE_BATTERY_APP_ID].chars_init_counter].uuid),
-                ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
-                ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_NOTIFY,
-                &(gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[gl_profile_tab[PROFILE_BATTERY_APP_ID].chars_init_counter].attr_val),
+            esp_err_t add_char_ret = esp_ble_gatts_add_char(gl_profile_tab[app_id].service_handle, 
+                &(gl_profile_tab[app_id].chars[gl_profile_tab[app_id].chars_init_counter].uuid),
+                gl_profile_tab[app_id].chars[gl_profile_tab[app_id].chars_init_counter].perm,
+                gl_profile_tab[app_id].chars[gl_profile_tab[app_id].chars_init_counter].property,
+                &(gl_profile_tab[app_id].chars[gl_profile_tab[app_id].chars_init_counter].attr_val),
                 NULL);
             if (add_char_ret) {
-                ESP_LOGE(GATTS_TAG, "Failed to add Battery Level characteristic, error code = %x", add_char_ret);
+                ESP_LOGE(GATTS_TAG, "Failed to add characteristic, error code = %x", add_char_ret);
             }
         } else {
             ESP_LOGI(GATTS_TAG, "All characteristics and descriptors added add_char_descr_evt.");
@@ -868,16 +515,16 @@ static void gatts_profile_battery_event_handler(esp_gatts_cb_event_t event, esp_
         break;
 
     case ESP_GATTS_START_EVT:
-        ESP_LOGI(GATTS_TAG, "Battery Service started, service_handle %d", param->start.service_handle);
+        ESP_LOGI(GATTS_TAG, "Service started Profile%d, service_handle %d", app_id, param->start.service_handle);
         break;
 
     case ESP_GATTS_READ_EVT:
-        ESP_LOGI(GATTS_TAG, "Battery characteristic read, handle %d", param->read.handle);
+        ESP_LOGI(GATTS_TAG, "Characteristic read Profile%d, handle %d", app_id, param->read.handle);
         esp_gatt_rsp_t rsp;
         memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
         rsp.attr_value.handle = param->read.handle;
 
-        charPtr = get_characteristic_by_handle(param->read.handle);
+        charPtr = get_characteristic_by_handle(&gl_profile_tab[app_id], param->read.handle);
         if(charPtr != NULL)
         {
             rsp.attr_value.len = charPtr->attr_val.attr_len;
@@ -885,7 +532,7 @@ static void gatts_profile_battery_event_handler(esp_gatts_cb_event_t event, esp_
         }
         else
         {
-            charPtr = get_characteristic_by_descriptor_handle(param->read.handle);
+            charPtr = get_characteristic_by_descriptor_handle(&gl_profile_tab[app_id], param->read.handle);
             if(charPtr != NULL)
             {
                 rsp.attr_value.len = 2; // Length of CCCD value
@@ -899,75 +546,99 @@ static void gatts_profile_battery_event_handler(esp_gatts_cb_event_t event, esp_
             }
         }
     
-        // if (param->read.handle == gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[GATTS_CHAR_NUM_BATTERY_LEVEL].handle) {
-        //     // Battery Level
-        //     ESP_LOGI(GATTS_TAG, "Battery level");
-        //     rsp.attr_value.len = 1;
-        //     rsp.attr_value.value[0] = battery_level; // Example: Battery Level = 50%
-        // } else if (param->read.handle == gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[GATTS_CHAR_NUM_BATTERY_VOLTAGE].handle) {
-        //     // Battery Voltage
-        //     ESP_LOGI(GATTS_TAG, "Battery volatage");
-        //     rsp.attr_value.len = 4;
-        //     //store floating point value in 4 bytes
-        //     // Convert to 4-byte representation
-        //     convert_to_battery_voltage(rsp.attr_value.value,battery_voltage);
-        // }
-        // else {
-        //     ESP_LOGE(GATTS_TAG, "Unknown handle");
-        //     return;
-        // }
-    
         esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_OK, &rsp);
         break;
     case ESP_GATTS_WRITE_EVT: 
-        ESP_LOGI(GATTS_TAG, "Write event BAT, handle %d", param->write.handle);
-        charPtr = get_characteristic_by_descriptor_handle(param->write.handle);
+        ESP_LOGI(GATTS_TAG, "Write event Profile%d, handle %d", app_id, param->write.handle);
 
-        if (charPtr != NULL) {
-            uint16_t descr_value = param->write.value[1] << 8 | param->write.value[0];
-            memcpy(charPtr->cccd_val.attr_value, param->write.value,2);
-            ESP_LOGI(GATTS_TAG, "Descriptor value: %d", descr_value);
-            if (descr_value == 0x0001) {
-                //print as hex in format 0x0001
-
-                ESP_LOGI(GATTS_TAG, "Notifications enabled for char 0x%04x", charPtr->uuid.uuid.uuid16);
-            } else if (descr_value == 0x0002) {
-                ESP_LOGI(GATTS_TAG, "Indications enabled for  char 0x%04x", charPtr->uuid.uuid.uuid16);
-            } else if (descr_value == 0x0000) {
-                ESP_LOGI(GATTS_TAG, "Notifications/Indications disabled for char 0x%04x", charPtr->uuid.uuid.uuid16);
+        charPtr = get_characteristic_by_handle(&gl_profile_tab[app_id], param->write.handle);
+        if(charPtr != NULL)
+        {
+            ESP_LOGI(GATTS_TAG, "Characteristic write Profile%d, handle %d", app_id, param->write.handle);
+            if (param->write.len > sizeof(charPtr->attr_val.attr_value)) {
+                ESP_LOGE(GATTS_TAG, "Write value too long");
+                status = ESP_GATT_ERROR;
+            } else {
+                memcpy(charPtr->attr_val.attr_value, param->write.value, param->write.len);
+                charPtr->attr_val.attr_len = param->write.len;
+                ESP_LOGI(GATTS_TAG, "Characteristic value: %d, len: %d", charPtr->attr_val.attr_value[0], charPtr->attr_val.attr_len);
+                ESP_LOG_BUFFER_HEX(GATTS_TAG, charPtr->attr_val.attr_value, charPtr->attr_val.attr_len);
             }
         }
         else
         {
-            ESP_LOGE(GATTS_TAG, "Unknown descriptor handle");
-            status = ESP_GATT_ERROR;
+
+            charPtr = get_characteristic_by_descriptor_handle(&gl_profile_tab[app_id],param->write.handle);
+
+            if (charPtr != NULL) {
+                uint16_t descr_value = param->write.value[1] << 8 | param->write.value[0];
+                memcpy(charPtr->cccd_val.attr_value, param->write.value,2);
+                ESP_LOGI(GATTS_TAG, "Descriptor value: %d", descr_value);
+                if (descr_value == 0x0001) {
+                    //print as hex in format 0x0001
+
+                    ESP_LOGI(GATTS_TAG, "Notifications enabled for char 0x%04x", charPtr->uuid.uuid.uuid16);
+                } else if (descr_value == 0x0002) {
+                    ESP_LOGI(GATTS_TAG, "Indications enabled for  char 0x%04x", charPtr->uuid.uuid.uuid16);
+                } else if (descr_value == 0x0000) {
+                    ESP_LOGI(GATTS_TAG, "Notifications/Indications disabled for char 0x%04x", charPtr->uuid.uuid.uuid16);
+                }
+            }
+            else
+            {
+                ESP_LOGE(GATTS_TAG, "Unknown descriptor handle %d", param->write.handle);
+                status = ESP_GATT_ERROR;
+            }
         }
         
-        // example_write_event_env(gatts_if, &b_prepare_write_env, param);
         esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, status, NULL);
         break;
     
     case ESP_GATTS_EXEC_WRITE_EVT:
-        ESP_LOGI(GATTS_TAG,"Execute write BAT");
+        ESP_LOGI(GATTS_TAG,"Execute write Profile%d", app_id);
         esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL);
-        // example_exec_write_event_env(&b_prepare_write_env, param);
         break;
         
     case ESP_GATTS_CONNECT_EVT:
-        ESP_LOGI(GATTS_TAG, "Connected BAT, conn_id %d, remote "ESP_BD_ADDR_STR"",
-                param->connect.conn_id, ESP_BD_ADDR_HEX(param->connect.remote_bda));
-        gl_profile_tab[PROFILE_BATTERY_APP_ID].conn_id = param->connect.conn_id;
-        serviceConnected = true;
+        ESP_LOGI(GATTS_TAG, "Connected Profile%d, conn_id %d, remote "ESP_BD_ADDR_STR"",
+                app_id, param->connect.conn_id, ESP_BD_ADDR_HEX(param->connect.remote_bda));
+        gl_profile_tab[app_id].conn_id = param->connect.conn_id;
+        if(serviceConnected == false)
+        {
+            esp_ble_conn_update_params_t conn_params = {0};
+            memcpy(conn_params.bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
+            /* For the IOS system, please reference the apple official documents about the ble connection parameters restrictions. */
+            conn_params.latency = 0;
+            conn_params.max_int = 0x30;    // max_int = 0x20*1.25ms = 40ms
+            conn_params.min_int = 0x20;    // min_int = 0x10*1.25ms = 20ms
+            conn_params.timeout = 600;    // timeout = 400*10ms = 4000ms
+            ESP_LOGI(GATTS_TAG, "Connected A, conn_id %u, remote "ESP_BD_ADDR_STR"",
+                     param->connect.conn_id, ESP_BD_ADDR_HEX(param->connect.remote_bda));
+            //start sent the update connection parameters to the peer device.
+            esp_ble_gap_update_conn_params(&conn_params);
+            
+            serviceConnected = true;
+        }
         break;
 
     case ESP_GATTS_DISCONNECT_EVT:
-        ESP_LOGI(GATTS_TAG, "Disconnected BAT, remote "ESP_BD_ADDR_STR", reason 0x%02x",
-                ESP_BD_ADDR_HEX(param->disconnect.remote_bda), param->disconnect.reason);
+        ESP_LOGI(GATTS_TAG, "Disconnected Profile%d, remote "ESP_BD_ADDR_STR", reason 0x%02x",
+                app_id, ESP_BD_ADDR_HEX(param->disconnect.remote_bda), param->disconnect.reason);
         serviceConnected = false;
         break;
     default:
         break;
     }
+}
+
+static void gatts_profile_motor_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
+
+    gatts_profile_generic_event_handler(PROFILE_MOTOR_APP_ID, event, gatts_if, param);
+}
+
+static void gatts_profile_battery_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
+
+    gatts_profile_generic_event_handler(PROFILE_BATTERY_APP_ID, event, gatts_if, param);
 }
 
 static void gatts_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param)
@@ -1051,19 +722,47 @@ void ble_driver_srv_task(void)
         ESP_LOGE(GATTS_TAG, "gap register error, error code = %x", ret);
         return;
     }
-    ret = esp_ble_gatts_app_register(PROFILE_A_APP_ID);
-    if (ret){
-        ESP_LOGE(GATTS_TAG, "gatts app register error, error code = %x", ret);
-        return;
+
+
+    esp_err_t set_dev_name_ret = esp_ble_gap_set_device_name(test_device_name);
+    if (set_dev_name_ret){
+        ESP_LOGE(GATTS_TAG, "set device name failed, error code = %x", set_dev_name_ret);
     }
-    ret = esp_ble_gatts_app_register(PROFILE_B_APP_ID);
-    if (ret){
-        ESP_LOGE(GATTS_TAG, "gatts app register error, error code = %x", ret);
-        return;
+#ifdef CONFIG_EXAMPLE_SET_RAW_ADV_DATA
+    esp_err_t raw_adv_ret = esp_ble_gap_config_adv_data_raw(raw_adv_data, sizeof(raw_adv_data));
+    if (raw_adv_ret){
+        ESP_LOGE(GATTS_TAG, "config raw adv data failed, error code = %x ", raw_adv_ret);
     }
+    adv_config_done |= adv_config_flag;
+    esp_err_t raw_scan_ret = esp_ble_gap_config_scan_rsp_data_raw(raw_scan_rsp_data, sizeof(raw_scan_rsp_data));
+    if (raw_scan_ret){
+        ESP_LOGE(GATTS_TAG, "config raw scan rsp data failed, error code = %x", raw_scan_ret);
+    }
+    adv_config_done |= scan_rsp_config_flag;
+#else
+    //config adv data
+    ret = esp_ble_gap_config_adv_data(&adv_data);
+    if (ret){
+        ESP_LOGE(GATTS_TAG, "config adv data failed, error code = %x", ret);
+    }
+    adv_config_done |= adv_config_flag;
+    //config scan response data
+    ret = esp_ble_gap_config_adv_data(&scan_rsp_data);
+    if (ret){
+        ESP_LOGE(GATTS_TAG, "config scan response data failed, error code = %x", ret);
+    }
+    adv_config_done |= scan_rsp_config_flag;
+
+#endif
+
     ret = esp_ble_gatts_app_register(PROFILE_BATTERY_APP_ID);
     if (ret) {
         ESP_LOGE(GATTS_TAG, "Battery Service app register error, error code = %x", ret);
+        return;
+    }
+    ret = esp_ble_gatts_app_register(PROFILE_MOTOR_APP_ID);
+    if (ret) {
+        ESP_LOGE(GATTS_TAG, "Motor Service app register error, error code = %x", ret);
         return;
     }
     esp_err_t local_mtu_ret = esp_ble_gatt_set_local_mtu(500);
@@ -1100,7 +799,7 @@ void update_battery_level(uint8_t bat_level) {
         }
     }
     else {
-        ESP_LOGI(GATTS_TAG, "Battery Service not connected, skipping update.");
+        // ESP_LOGI(GATTS_TAG, "Battery Service not connected, skipping update.");
     }
 
 }
@@ -1111,7 +810,7 @@ void update_battery_voltage(float bat_voltage) {
 
     if(serviceConnected == true) {
         uint8_t buf[4];
-        convert_to_battery_voltage(buf,battery_voltage);
+        convertFloatToUint8Buf(buf,battery_voltage);
         // Update the characteristic value
         esp_ble_gatts_set_attr_value(gl_profile_tab[PROFILE_BATTERY_APP_ID].chars[GATTS_CHAR_NUM_BATTERY_VOLTAGE].handle, sizeof(buf), buf);
 
@@ -1127,6 +826,14 @@ void update_battery_voltage(float bat_voltage) {
         }
     }
     else {
-        ESP_LOGI(GATTS_TAG, "Battery Service not connected, skipping update.");
+        // ESP_LOGI(GATTS_TAG, "Battery Service not connected, skipping update.");
     }
+}
+
+uint8_t read_motor_speed(void) {
+    return motorSpeed;
+}
+
+uint8_t read_motor_direction(void) {
+    return motorDirection;
 }
