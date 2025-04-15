@@ -793,13 +793,12 @@ static void gattsProfileGenericEventHandler(uint8_t app_id, esp_gatts_cb_event_t
             esp_ble_gap_start_advertising(&adv_params);
             ESP_LOGI(GATTS_TAG, "Advertising started after disconnection");
         }
-        profile_tab[app_id].conn_id = 0xFF;
+        // profile_tab[app_id].conn_id = 0xFF;
         for(int i = 0; i < 2; i++)
         {        
             // memset(profile_tab[app_id].chars[i].attr_val.attr_value,0, profile_tab[app_id].chars[i].attr_val.attr_len);
             memset(profile_tab[app_id].chars[i].cccd_val.attr_value,0, profile_tab[app_id].chars[i].cccd_val.attr_len);
         }
-        profile_tab[app_id].gatts_if = ESP_GATT_IF_NONE;
         
         service_connected = false;
         break;
