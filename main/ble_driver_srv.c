@@ -73,6 +73,7 @@ typedef struct {
     uint16_t descr_handle;               // Handle for the descriptor
     esp_bt_uuid_t descr_uuid;            // UUID of the descriptor
     esp_attr_value_t cccd_val;           // CCCD value for notifications/indications
+    bool never_recv;                 // Flag to indicate if the characteristic has been received
 } ble_characteristic_t;
 
 // GATT Profile Instance Structure
@@ -202,6 +203,7 @@ static gatts_profile_inst_t profile_tab[PROFILE_NUM] = {
         },
         .chars = {
             [GATTS_CHAR_NUM_BATTERY_LEVEL] = {
+                .never_recv = true,
                 .uuid = {
                     .len = ESP_UUID_LEN_16,
                     .uuid = { .uuid16 = GATTS_CHAR_UUID_BATTERY_LEVEL },
@@ -224,6 +226,7 @@ static gatts_profile_inst_t profile_tab[PROFILE_NUM] = {
                 },
             },
             [GATTS_CHAR_NUM_BATTERY_VOLTAGE] = {
+                .never_recv = true,
                 .uuid = {
                     .len = ESP_UUID_LEN_16,
                     .uuid = { .uuid16 = GATTS_CHAR_UUID_BATTERY_VOLTAGE },
@@ -265,6 +268,7 @@ static gatts_profile_inst_t profile_tab[PROFILE_NUM] = {
         },
         .chars = {
             [GATTS_CHAR_NUM_MOTOR_SPEED] = {
+                .never_recv = true,
                 .uuid = {
                     .len = ESP_UUID_LEN_16,
                     .uuid = { .uuid16 = GATTS_CHAR_UUID_MOTOR_SPEED },
@@ -287,6 +291,7 @@ static gatts_profile_inst_t profile_tab[PROFILE_NUM] = {
                 },
             },
             [GATTS_CHAR_NUM_MOTOR_DIRECTION] = {
+                .never_recv = true,
                 .uuid = {
                     .len = ESP_UUID_LEN_16,
                     .uuid = { .uuid16 = GATTS_CHAR_UUID_MOTOR_DIRECTION },
@@ -325,6 +330,11 @@ static uint16_t convertUint8ArrToUint16(uint8_t *arr);
 static void convertFloatToUint8Arr(uint8_t *buf, float voltage);
 
 // Global Functions
+bool BleDriverSrv_IsConnected(void) 
+{
+    return service_connected;
+}
+
 void BleDriverSrv_Setup(void)
 {
     MY_LOGI(GATTS_TAG, "BLE Driver Service Setup");
@@ -488,12 +498,37 @@ void BleDriverSrv_UpdateBatteryVoltage(float bat_voltage) {
     }
 }
 
-uint8_t BleDriverSrv_GetMotorSpeed(void) {
-    return motor_speed;
+bool BleDriverSrv_GetMotorSpeed(uint8_t* val) {
+
+    if (val == NULL) {
+        MY_LOGE(GATTS_TAG, "Invalid pointer for motor speed value.");
+        return false;
+    }
+    //check if never recieved
+    else if(profile_tab[PROFILE_MOTOR_APP_ID].chars[GATTS_CHAR_NUM_MOTOR_SPEED].never_recv == true) {
+        MY_LOGE(GATTS_TAG, "Motor speed characteristic not received yet.");
+        return false;
+    }
+    else {
+        *val = motor_speed;
+        return true;
+    }
 }
 
-uint8_t BleDriverSrv_GetMotorDirection(void) {
-    return motor_direction;
+bool BleDriverSrv_GetMotorDirection(uint8_t* val) {
+    if (val == NULL) {
+        MY_LOGE(GATTS_TAG, "Invalid pointer for motor direction value.");
+        return false;
+    }
+    //check if never recieved
+    else if(profile_tab[PROFILE_MOTOR_APP_ID].chars[GATTS_CHAR_NUM_MOTOR_DIRECTION].never_recv == true) {
+        MY_LOGE(GATTS_TAG, "Motor direction characteristic not received yet.");
+        return false;
+    }
+    else {
+        *val = motor_direction;
+        return true;
+    }
 }
 
 // Local Functions
@@ -741,6 +776,7 @@ static void gattsProfileGenericEventHandler(uint8_t app_id, esp_gatts_cb_event_t
                 charPtr->attr_val.attr_len = param->write.len;
                 MY_LOGD(GATTS_TAG, "Characteristic value: %d, len: %d", charPtr->attr_val.attr_value[0], charPtr->attr_val.attr_len);
                 MY_LOGBUF(GATTS_TAG, charPtr->attr_val.attr_value, charPtr->attr_val.attr_len);
+                charPtr->never_recv = false;
             }
         }
         else

@@ -15,16 +15,24 @@ void locomotive_task(void *arg)
     uint8_t motor_speed = 0;
     uint8_t motor_direction = 0;
     while (1) {
-        // Your task code here
+        if (BleDriverSrv_IsConnected() == true) {
+            
+            // Example: Send data to the BLE characteristic
+            battery_level = (battery_level > 0) ? battery_level-1 : 100; // Simulate battery level decrease
+            BleDriverSrv_UpdateBatteryLevel(battery_level); // Update battery level to 50%
+            // vTaskDelay(5000 / portTICK_PERIOD_MS);
+            BleDriverSrv_UpdateBatteryVoltage((4.2f * (float)battery_level) / 100.0f); // Update battery voltage to 4.1V
+
+            if(BleDriverSrv_GetMotorSpeed(&motor_speed) == false) {
+                ESP_LOGE("Locomotive Task", "Failed to get motor speed");
+            }
+            if(BleDriverSrv_GetMotorDirection(&motor_direction) == false) {
+                ESP_LOGE("Locomotive Task", "Failed to get motor direction");
+            }
+            ESP_LOGI("Locomotive Task", "Motor Speed: %d, Motor Direction: %d", motor_speed, motor_direction);
+        }
+        
         vTaskDelay(1000 / portTICK_PERIOD_MS);
-        // Example: Send data to the BLE characteristic
-        battery_level = (battery_level > 0) ? battery_level-1 : 100; // Simulate battery level decrease
-        BleDriverSrv_UpdateBatteryLevel(battery_level); // Update battery level to 50%
-        // vTaskDelay(5000 / portTICK_PERIOD_MS);
-        BleDriverSrv_UpdateBatteryVoltage((4.2f * (float)battery_level) / 100.0f); // Update battery voltage to 4.1V
-        motor_speed = BleDriverSrv_GetMotorSpeed();
-        motor_direction = BleDriverSrv_GetMotorDirection();
-        ESP_LOGI("Locomotive Task", "Motor Speed: %d, Motor Direction: %d", motor_speed, motor_direction);
     }
 }
 

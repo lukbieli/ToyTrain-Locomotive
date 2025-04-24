@@ -28,17 +28,29 @@ void BleDriverSrv_UpdateBatteryVoltage(float bat_voltage);
 /**
  * @brief Retrieves the current motor speed.
  * 
- * @return The motor speed as a uint8_t value. This value represents
- *         the speed of the motor in an application-defined unit.
+ * @param val Pointer to a uint8_t variable where the motor speed
+ *            will be stored.
+ * 
+ * @return true if the motor speed was successfully retrieved,
+ *        false if the pointer is invalid or the characteristic has not been received yet.
  */
-uint8_t BleDriverSrv_GetMotorSpeed(void);
+bool BleDriverSrv_GetMotorSpeed(uint8_t* val);
 
 /**
  * @brief Retrieves the current motor direction.
  * 
- * @return The motor direction as a uint8_t value. This value indicates
- *         the direction of the motor (e.g., forward or reverse).
+ * @param val Pointer to a uint8_t variable where the motor direction
+ * 
+ * @return true if the motor direction was successfully retrieved,
+ *         false if the pointer is invalid or the characteristic has not been received yet.
  */
-uint8_t BleDriverSrv_GetMotorDirection(void);
+bool BleDriverSrv_GetMotorDirection(uint8_t* val);
+
+/**
+ * @brief Indicates if connection to the BLE service is established.
+ * 
+ * @return true if connected, false otherwise.
+ */
+bool BleDriverSrv_IsConnected(void);
 
 #endif // BLE_DRIVER_SRV_H
