@@ -12,16 +12,18 @@
 void locomotive_task(void *arg)
 {
     uint8_t battery_level = 100; // Example battery level
+    uint8_t motor_speed = 0;
+    uint8_t motor_direction = 0;
     while (1) {
         // Your task code here
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
         // Example: Send data to the BLE characteristic
         battery_level = (battery_level > 0) ? battery_level-1 : 100; // Simulate battery level decrease
         BleDriverSrv_UpdateBatteryLevel(battery_level); // Update battery level to 50%
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        // vTaskDelay(5000 / portTICK_PERIOD_MS);
         BleDriverSrv_UpdateBatteryVoltage((4.2f * (float)battery_level) / 100.0f); // Update battery voltage to 4.1V
-        uint8_t motor_speed = BleDriverSrv_GetMotorSpeed();
-        uint8_t motor_direction = BleDriverSrv_GetMotorDirection();
+        motor_speed = BleDriverSrv_GetMotorSpeed();
+        motor_direction = BleDriverSrv_GetMotorDirection();
         ESP_LOGI("Locomotive Task", "Motor Speed: %d, Motor Direction: %d", motor_speed, motor_direction);
     }
 }
