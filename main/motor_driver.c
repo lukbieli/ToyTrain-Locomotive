@@ -120,7 +120,7 @@ void MotorDriver_SetSpeed(uint8_t speed)
     // Set the PWM duty cycle based on the speed (0-100%)
     uint32_t pulse_width = SERVO_MIN_PULSEWIDTH_US + ((SERVO_MAX_PULSEWIDTH_US - SERVO_MIN_PULSEWIDTH_US) * speed) / 100;
     ESP_ERROR_CHECK(mcpwm_comparator_set_compare_value(comparator, pulse_width));
-    ESP_LOGI(TAG, "Motor speed set to %d, pulse_width: %lu", speed, pulse_width);
+    // ESP_LOGI(TAG, "Motor speed set to %d, pulse_width: %lu", speed, pulse_width);
 }
 
 /**
@@ -140,7 +140,7 @@ void MotorDriver_SetDirection(uint8_t direction)
         ESP_ERROR_CHECK(gpio_set_level(MOT_IN1_GPIO, 0));
         ESP_ERROR_CHECK(gpio_set_level(MOT_IN2_GPIO, 1));
     }
-    ESP_LOGI(TAG, "Motor direction set to %s", (direction == 0) ? "forward" : "backward");
+    // ESP_LOGI(TAG, "Motor direction set to %s", (direction == 0) ? "forward" : "backward");
 }
 
 
