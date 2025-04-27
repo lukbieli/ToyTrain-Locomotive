@@ -439,12 +439,12 @@ void BleDriverSrv_Setup(void)
     MY_LOGI(GATTS_TAG, "BLE Driver Service Setup Complete");
 
 
-    //loop
-    while (1) {
-        vTaskDelay(10000 / portTICK_PERIOD_MS);
+    // //loop
+    // while (1) {
+    //     vTaskDelay(10000 / portTICK_PERIOD_MS);
 
-    }
-    return;
+    // }
+    // return;
 }
 
 void BleDriverSrv_UpdateBatteryLevel(uint8_t bat_level) {
@@ -506,7 +506,7 @@ bool BleDriverSrv_GetMotorSpeed(uint8_t* val) {
     }
     //check if never recieved
     else if(profile_tab[PROFILE_MOTOR_APP_ID].chars[GATTS_CHAR_NUM_MOTOR_SPEED].never_recv == true) {
-        MY_LOGE(GATTS_TAG, "Motor speed characteristic not received yet.");
+        MY_LOGD(GATTS_TAG, "Motor speed characteristic not received yet.");
         return false;
     }
     else {
@@ -522,7 +522,7 @@ bool BleDriverSrv_GetMotorDirection(uint8_t* val) {
     }
     //check if never recieved
     else if(profile_tab[PROFILE_MOTOR_APP_ID].chars[GATTS_CHAR_NUM_MOTOR_DIRECTION].never_recv == true) {
-        MY_LOGE(GATTS_TAG, "Motor direction characteristic not received yet.");
+        MY_LOGD(GATTS_TAG, "Motor direction characteristic not received yet.");
         return false;
     }
     else {
