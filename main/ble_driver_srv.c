@@ -104,7 +104,7 @@ static uint8_t cccd_value_motor_speed[2] = {0x00, 0x00}; // Motor Speed
 static uint8_t cccd_value_motor_direction[2] = {0x00, 0x00}; // Motor Direction
 
 // Device Name and Advertising Configuration
-static char test_device_name[ESP_BLE_ADV_NAME_LEN_MAX] = "ESP_GATTS_DEMO";
+static char test_device_name[ESP_BLE_ADV_NAME_LEN_MAX] = "TTLoc_001";
 static uint8_t adv_config_done = 0;
 
 // Advertising Data
