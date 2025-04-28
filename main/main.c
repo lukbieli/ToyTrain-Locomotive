@@ -9,6 +9,62 @@
 #include "ble_driver_srv.h"
 #include "motor_driver.h"
 
+//stete machine for the task
+typedef enum {
+    LOCOMOTIVE_IDLE,
+    LOCOMOTIVE_RUNNING,
+    LOCOMOTIVE_ERROR
+} locomotive_state_t;
+
+static locomotive_state_t locomotive_state = LOCOMOTIVE_IDLE;
+
+static locomotive_state_t state_running(void)
+{
+    uint8_t motor_speed = 0;
+    uint8_t motor_direction = 0;
+    static uint8_t prev_motor_speed = 0;
+    static uint8_t prev_motor_direction = 0;
+    if(BleDriverSrv_GetMotorSpeed(&motor_speed) && BleDriverSrv_GetMotorDirection(&motor_direction)) {
+        // Set motor speed and direction based on BLE characteristic values
+        MotorDriver_SetSpeed(motor_speed);
+        MotorDriver_SetDirection(motor_direction);
+        if (motor_speed != prev_motor_speed || motor_direction != prev_motor_direction) {
+            ESP_LOGI("Loc Task", "Motor Speed: %d, Motor Direction: %d", motor_speed, motor_direction);
+            prev_motor_speed = motor_speed;
+            prev_motor_direction = motor_direction;
+        }
+    }
+
+    return LOCOMOTIVE_RUNNING;
+}
+
+static locomotive_state_t state_machine(locomotive_state_t state)
+{
+    switch (state) {
+        case LOCOMOTIVE_IDLE:
+            // Perform actions for idle state
+            if (BleDriverSrv_IsConnected() == true) {
+                ESP_LOGI("Locomotive Task", "Locomotive is connected. Moving to RUNNING state");
+                state = LOCOMOTIVE_RUNNING;
+            }
+            break;
+        case LOCOMOTIVE_RUNNING:
+            // Perform actions for running state
+            state = state_running();
+            if (BleDriverSrv_IsConnected() == false) {
+                ESP_LOGI("Locomotive Task", "Locomotive is disconnected. Moving to IDLE state");
+                MotorDriver_Stop();
+                state = LOCOMOTIVE_IDLE;
+            }
+            break;
+        case LOCOMOTIVE_ERROR:
+            // Handle error state
+            MotorDriver_Stop();
+            break;
+    }
+    return state;
+}
+
 //function for freertos task
 void locomotive_task(void *arg)
 {
@@ -20,27 +76,8 @@ void locomotive_task(void *arg)
     static uint8_t prev_motor_speed = 0;
     static uint8_t prev_motor_direction = 0;
     while (1) {
-        if (BleDriverSrv_IsConnected() == true) {
-            
-            // // Example: Send data to the BLE characteristic
-            // battery_level = (battery_level > 0) ? battery_level-1 : 100; // Simulate battery level decrease
-            // BleDriverSrv_UpdateBatteryLevel(battery_level); // Update battery level to 50%
-            // // vTaskDelay(5000 / portTICK_PERIOD_MS);
-            // BleDriverSrv_UpdateBatteryVoltage((4.2f * (float)battery_level) / 100.0f); // Update battery voltage to 4.1V
-
-            if(BleDriverSrv_GetMotorSpeed(&motor_speed) && BleDriverSrv_GetMotorDirection(&motor_direction)) {
-                // Set motor speed and direction based on BLE characteristic values
-                MotorDriver_SetSpeed(motor_speed);
-                MotorDriver_SetDirection(motor_direction);
-                if (motor_speed != prev_motor_speed || motor_direction != prev_motor_direction) {
-                    ESP_LOGI("Loc Task", "Motor Speed: %d, Motor Direction: %d", motor_speed, motor_direction);
-                    prev_motor_speed = motor_speed;
-                    prev_motor_direction = motor_direction;
-                }
-                // ESP_LOGI("Loc Task", "Motor Speed: %d, Motor Direction: %d", motor_speed, motor_direction);
-            }
-            // ESP_LOGI("Locomotive Task", "Motor Speed: %d, Motor Direction: %d", motor_speed, motor_direction);
-        }
+        //call state machine
+        locomotive_state = state_machine(locomotive_state);
 
         
         vTaskDelay(50 / portTICK_PERIOD_MS);
