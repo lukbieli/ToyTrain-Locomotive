@@ -24,7 +24,7 @@
 #include <esp_err.h>
 #include "ble_driver_srv.h"
 #include "motor_driver.h"
-#include "battery_voltage.h"
+#include "battery_monitor.h"
 
 //stete machine for the task
 typedef enum {
@@ -39,8 +39,8 @@ static locomotive_state_t state_running(void)
 {
     uint8_t motor_speed = 0;
     uint8_t motor_direction = 0;
-    static uint8_t prev_motor_speed = 0;
-    static uint8_t prev_motor_direction = 0;
+    static uint8_t prev_motor_speed = 0xFF;
+    static uint8_t prev_motor_direction = 0xFF;
     if(BleDriverSrv_GetMotorSpeed(&motor_speed) && BleDriverSrv_GetMotorDirection(&motor_direction)) {
         // Set motor speed and direction based on BLE characteristic values
         if(motor_speed == 0)
@@ -111,6 +111,8 @@ void locomotive_task(void *arg)
 void battery_task(void *arg)
 {
     uint8_t battery_level = 100;
+    // Initialize the battery monitor
+    BatteryMonitor_Init();
     while (1) {
         // read battery voltage
         float bat_volt = BatteryMonitor_Read();
@@ -119,7 +121,7 @@ void battery_task(void *arg)
             
             
             BleDriverSrv_UpdateBatteryLevel(battery_level); 
-            BleDriverSrv_UpdateBatteryMonitor(bat_volt);
+            BleDriverSrv_UpdateBatteryVoltage(bat_volt);
         }
         vTaskDelay(60000 / portTICK_PERIOD_MS);
     }
@@ -135,20 +137,6 @@ void app_main(void)
     
     BleDriverSrv_Setup();
     ESP_LOGI("Main", "BLE Driver Service Setup Complete");
-    
-    // MotorDriver_SetSpeed(50);
-    // MotorDriver_SetDirection(0); 
-
-    // vTaskDelay(1000 / portTICK_PERIOD_MS);
-    // MotorDriver_SetSpeed(20);
-    // MotorDriver_SetDirection(1); 
-    // vTaskDelay(1000 / portTICK_PERIOD_MS);
-    // MotorDriver_SetSpeed(100);
-    // MotorDriver_SetDirection(0); 
-    // vTaskDelay(1000 / portTICK_PERIOD_MS);
-    // MotorDriver_Stop();
-    // ESP_LOGI("Main", "Motor Stopped");
-
 
     //create task for locomotive
     xTaskCreate(locomotive_task, "locomotive_task", 2048 * 2, NULL, 5, NULL);
