@@ -174,5 +174,5 @@ void MotorDriver_Stop(void)
 
     ESP_ERROR_CHECK(gpio_set_level(MOT_IN1_GPIO, 0));
     ESP_ERROR_CHECK(gpio_set_level(MOT_IN2_GPIO, 0));
-    ESP_LOGI(TAG, "Motor stopped");
+    // ESP_LOGI(TAG, "Motor stopped");
 }

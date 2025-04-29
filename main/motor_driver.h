@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
- #ifndef MOTOR_DRIVER_H
+#ifndef MOTOR_DRIVER_H
 #define MOTOR_DRIVER_H
 
 #include <stdint.h>

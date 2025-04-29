@@ -24,6 +24,7 @@
 #include <esp_err.h>
 #include "ble_driver_srv.h"
 #include "motor_driver.h"
+#include "battery_voltage.h"
 
 //stete machine for the task
 typedef enum {
@@ -109,12 +110,16 @@ void locomotive_task(void *arg)
 
 void battery_task(void *arg)
 {
-    uint8_t battery_level = 100; // Example battery level
+    uint8_t battery_level = 100;
     while (1) {
+        // read battery voltage
+        float bat_volt = BatteryMonitor_Read();
+        battery_level = BatteryMonitor_GetLevel();
         if (BleDriverSrv_IsConnected() == true) {
-            // Example: Send data to the BLE characteristic
-            battery_level = (battery_level > 0) ? battery_level-1 : 100; // Simulate battery level decrease
-            BleDriverSrv_UpdateBatteryLevel(battery_level); // Update battery level to 50%
+            
+            
+            BleDriverSrv_UpdateBatteryLevel(battery_level); 
+            BleDriverSrv_UpdateBatteryMonitor(bat_volt);
         }
         vTaskDelay(5000 / portTICK_PERIOD_MS);
     }
@@ -146,7 +151,7 @@ void app_main(void)
 
 
     //create task for locomotive
-    xTaskCreate(locomotive_task, "locomotive_task", 2048, NULL, 5, NULL);
+    xTaskCreate(locomotive_task, "locomotive_task", 2048 * 2, NULL, 5, NULL);
 
     //create task for battery
     xTaskCreate(battery_task, "battery_task", 2048, NULL, 5, NULL);
