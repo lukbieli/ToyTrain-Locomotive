@@ -26,8 +26,15 @@ static locomotive_state_t state_running(void)
     static uint8_t prev_motor_direction = 0;
     if(BleDriverSrv_GetMotorSpeed(&motor_speed) && BleDriverSrv_GetMotorDirection(&motor_direction)) {
         // Set motor speed and direction based on BLE characteristic values
-        MotorDriver_SetSpeed(motor_speed);
-        MotorDriver_SetDirection(motor_direction);
+        if(motor_speed == 0)
+        {
+            MotorDriver_Stop();
+        }
+        else
+        {
+            MotorDriver_SetSpeed(motor_speed);
+            MotorDriver_SetDirection(motor_direction);
+        }
         if (motor_speed != prev_motor_speed || motor_direction != prev_motor_direction) {
             ESP_LOGI("Loc Task", "Motor Speed: %d, Motor Direction: %d", motor_speed, motor_direction);
             prev_motor_speed = motor_speed;
@@ -53,7 +60,7 @@ static locomotive_state_t state_machine(locomotive_state_t state)
             state = state_running();
             if (BleDriverSrv_IsConnected() == false) {
                 ESP_LOGI("Locomotive Task", "Locomotive is disconnected. Moving to IDLE state");
-                MotorDriver_Stop();
+                MotorDriver_Stop(); 
                 state = LOCOMOTIVE_IDLE;
             }
             break;
