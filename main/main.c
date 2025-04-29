@@ -121,7 +121,7 @@ void battery_task(void *arg)
             BleDriverSrv_UpdateBatteryLevel(battery_level); 
             BleDriverSrv_UpdateBatteryMonitor(bat_volt);
         }
-        vTaskDelay(5000 / portTICK_PERIOD_MS);
+        vTaskDelay(60000 / portTICK_PERIOD_MS);
     }
 }
 
