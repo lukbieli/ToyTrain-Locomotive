@@ -23,8 +23,6 @@
 #include "esp_log.h"
 #include "esp_err.h"
 
-#define SERVO_MIN_PULSEWIDTH_US 0  // Minimum pulse width in microsecond
-#define SERVO_MAX_PULSEWIDTH_US 20000  // Maximum pulse width in microsecond
 #define SERVO_MIN_DEGREE        -90   // Minimum angle
 #define SERVO_MAX_DEGREE        90    // Maximum angle
 
@@ -33,7 +31,9 @@
 #define MOT_IN2_GPIO        5        // GPIO connects to the motor driver IN2 pin
 #define MOT_STBY_GPIO      21        // GPIO connects to the motor driver STBY pin
 #define SERVO_TIMEBASE_RESOLUTION_HZ 1000000  // 1MHz, 1us per tick
-#define SERVO_TIMEBASE_PERIOD        20000    // 20000 ticks, 20ms
+#define SERVO_TIMEBASE_PERIOD        1000    // 1000 ticks, 1ms
+#define SERVO_MIN_PULSEWIDTH_US 0  // Minimum pulse width in microsecond
+#define SERVO_MAX_PULSEWIDTH_US SERVO_TIMEBASE_PERIOD  // Maximum pulse width in microsecond
 
 static const char *TAG = "MOT_DRV";
 static mcpwm_cmpr_handle_t comparator = NULL;
