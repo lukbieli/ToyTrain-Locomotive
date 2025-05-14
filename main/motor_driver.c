@@ -39,10 +39,10 @@
 #elif CONFIG_IDF_TARGET_ESP32C3
 #include "driver/ledc.h"
 /* pinout for ESP32-C3 */
-#define PWM_GPIO             21        // GPIO connects to the PWM signal line
-#define MOT_IN1_GPIO        10        // GPIO connects to the motor driver IN1 pin
-#define MOT_IN2_GPIO        20        // GPIO connects to the motor driver IN2 pin
-#define MOT_STBY_GPIO      9        // GPIO connects to the motor driver STBY pin
+#define PWM_GPIO             10        // GPIO connects to the PWM signal line
+#define MOT_IN1_GPIO        6        // GPIO connects to the motor driver IN1 pin
+#define MOT_IN2_GPIO        7        // GPIO connects to the motor driver IN2 pin
+#define MOT_STBY_GPIO      5        // GPIO connects to the motor driver STBY pin
 
 #define LEDC_TIMER              LEDC_TIMER_0
 #define LEDC_MODE               LEDC_LOW_SPEED_MODE

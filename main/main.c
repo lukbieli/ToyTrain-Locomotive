@@ -25,6 +25,8 @@
 #include "ble_driver_srv.h"
 #include "motor_driver.h"
 #include "battery_monitor.h"
+#include "driver/gpio.h"
+#include "light_driver.h"
 
 //stete machine for the task
 typedef enum {
@@ -52,10 +54,18 @@ static locomotive_state_t state_running(void)
             MotorDriver_SetSpeed(motor_speed);
             MotorDriver_SetDirection(motor_direction);
         }
-        if (motor_speed != prev_motor_speed || motor_direction != prev_motor_direction) {
+        if ((motor_speed != prev_motor_speed) || (motor_direction != prev_motor_direction)) {
             ESP_LOGI("Loc Task", "Motor Speed: %d, Motor Direction: %d", motor_speed, motor_direction);
             prev_motor_speed = motor_speed;
             prev_motor_direction = motor_direction;
+            // Update the light state based on motor speed
+            if((motor_speed > 0)) {
+                LightDriver_TurnOn(LIGHT_FRONT);
+                LightDriver_TurnOff(LIGHT_BACK);
+            } else {
+                LightDriver_TurnOff(LIGHT_FRONT);
+                LightDriver_TurnOn(LIGHT_BACK);
+            }
         }
     }
 
@@ -79,6 +89,8 @@ static locomotive_state_t state_machine(locomotive_state_t state)
                 ESP_LOGI("Locomotive Task", "Locomotive is disconnected. Moving to IDLE state");
                 MotorDriver_Stop(); 
                 state = LOCOMOTIVE_IDLE;
+                LightDriver_TurnOff(LIGHT_FRONT);
+                LightDriver_Blink(LIGHT_BACK,200);
             }
             break;
         case LOCOMOTIVE_ERROR:
@@ -96,6 +108,7 @@ void locomotive_task(void *arg)
     uint8_t motor_speed = 0;
     uint8_t motor_direction = 0;
 
+    LightDriver_Blink(LIGHT_BACK,200);
     
     static uint8_t prev_motor_speed = 0;
     static uint8_t prev_motor_direction = 0;
@@ -103,6 +116,8 @@ void locomotive_task(void *arg)
         //call state machine
         locomotive_state = state_machine(locomotive_state);
 
+        // call light driver task
+        LightDriver_Task();
         
         vTaskDelay(50 / portTICK_PERIOD_MS);
     }
@@ -134,7 +149,15 @@ void app_main(void)
     MotorDriver_Init();
     ESP_LOGI("Main", "Motor Driver Initialized");
 
-    
+    // Initialize the light driver
+    // This function sets up the necessary GPIO pins for controlling the lights
+    LightDriver_Init(50);
+    ESP_LOGI("Main", "Light Driver Initialized");
+
+    //sleeep for 10 second
+    vTaskDelay(2000 / portTICK_PERIOD_MS);
+
+    // Initialize the BLE driver service
     BleDriverSrv_Setup();
     ESP_LOGI("Main", "BLE Driver Service Setup Complete");
 
